@@ -82,6 +82,7 @@ export function CenterPanel() {
   const previewDna = useGeneratorStore((s) => s.previewDna);
   const previewTraits = useGeneratorStore((s) => s.previewTraits);
   const rollDice = useGeneratorStore((s) => s.rollDice);
+  const isRollingDice = useGeneratorStore((s) => s.isRollingDice);
   const isGenerating = useGeneratorStore((s) => s.isGenerating);
   const generationProgress = useGeneratorStore((s) => s.generationProgress);
   const generationTotal = useGeneratorStore((s) => s.generationTotal);
@@ -136,9 +137,20 @@ export function CenterPanel() {
             )}
           </div>
 
-          <GlowButton variant="primary" onClick={rollDice} className="w-full px-6 sm:w-auto">
-            <Dices size={16} /> Roll the Dice
+          <GlowButton
+            variant="primary"
+            onClick={() => void rollDice()}
+            disabled={isRollingDice || layers.length === 0}
+            className="w-full px-6 sm:w-auto"
+          >
+            <Dices size={16} /> {isRollingDice ? "Rolling…" : "Roll the Dice"}
           </GlowButton>
+
+          {generationError && (
+            <div className="w-full rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+              {generationError}
+            </div>
+          )}
 
           {previewTraits.length > 0 && (
             <div className="w-full rounded-lg border border-zinc-800 bg-[#0d0d12] p-3">

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback } from "react";
 import {
   ChevronDown,
   ChevronUp,
@@ -393,11 +393,6 @@ export function LeftPanel() {
   const addDependency = useGeneratorStore((s) => s.addDependency);
   const removeDependency = useGeneratorStore((s) => s.removeDependency);
   const importCollectionFromFiles = useGeneratorStore((s) => s.importCollectionFromFiles);
-  const initDemo = useGeneratorStore((s) => s.initDemo);
-
-  useEffect(() => {
-    initDemo();
-  }, [initDemo]);
 
   return (
     <div className="flex h-full flex-col gap-4 lg:overflow-y-auto lg:pr-1">

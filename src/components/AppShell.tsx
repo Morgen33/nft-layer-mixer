@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BookOpen, Hexagon, ShieldBan } from "lucide-react";
 import { IncompatibilityRulesModal } from "@/components/IncompatibilityRulesModal";
 import { LeftPanel } from "@/components/panels/LeftPanel";
@@ -12,6 +12,14 @@ import { useGeneratorStore } from "@/lib/store";
 export function AppShell() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const exclusionCount = useGeneratorStore((s) => s.exclusions.length);
+  const initDemo = useGeneratorStore((s) => s.initDemo);
+  const layers = useGeneratorStore((s) => s.layers);
+
+  useEffect(() => {
+    if (layers.length === 0) {
+      initDemo();
+    }
+  }, [initDemo, layers.length]);
 
   return (
     <div className="min-h-dvh bg-[#0d0d12] text-zinc-100 lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden">

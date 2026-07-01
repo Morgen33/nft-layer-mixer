@@ -74,6 +74,7 @@ interface GeneratorStore {
   generatedAssets: GeneratedAsset[];
   traitDistribution: Record<string, Record<string, number>>;
   generationError: string | null;
+  isRollingDice: boolean;
 
   initDemo: () => void;
   addLayer: (name: string) => void;
@@ -177,6 +178,7 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   generatedAssets: [],
   traitDistribution: {},
   generationError: null,
+  isRollingDice: false,
 
   initDemo: () => {
     const state = get();
@@ -576,35 +578,76 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
 
   rollDice: async () => {
     const { layers, dependencies, exclusions } = get();
-    if (layers.length === 0) return;
 
-    const rolled = rollCombination(layers, dependencies, exclusions, new Set());
-    if (!rolled) {
-      set({ generationError: "Could not roll a valid combination. Check rules." });
+    if (layers.length === 0) {
+      set({
+        generationError:
+          "No layers loaded yet. Import a collection folder or wait a moment, then try again.",
+      });
       return;
     }
 
-    const traitInfo = buildTraitInfoFromSelection(layers, rolled.selection);
-    const orderedTraits = layers.map((layer) => {
-      const traitId = rolled.selection.get(layer.id)!;
-      return layer.traits.find((t) => t.id === traitId)!;
-    });
+    if (layers.some((layer) => layer.traits.length === 0)) {
+      set({
+        generationError:
+          "Every layer needs at least one trait before you can roll.",
+      });
+      return;
+    }
 
-    const blob = await compositeTraits(
-      orderedTraits,
-      get().canvasSize,
-      get().canvasSize,
-    );
+    set({ isRollingDice: true, generationError: null });
 
-    if (previewUrlRef) URL.revokeObjectURL(previewUrlRef);
-    previewUrlRef = URL.createObjectURL(blob);
+    try {
+      const rolled = rollCombination(
+        layers,
+        dependencies,
+        exclusions,
+        new Set(),
+      );
+      if (!rolled) {
+        set({
+          isRollingDice: false,
+          generationError:
+            "Could not roll a valid combination. Clear or loosen your Rules bans and try again.",
+        });
+        return;
+      }
 
-    set({
-      previewTraits: traitInfo,
-      previewUrl: previewUrlRef,
-      previewDna: rolled.dna,
-      generationError: null,
-    });
+      const traitInfo = buildTraitInfoFromSelection(layers, rolled.selection);
+      const orderedTraits = layers.map((layer) => {
+        const traitId = rolled.selection.get(layer.id);
+        const trait = layer.traits.find((t) => t.id === traitId);
+        if (!trait) {
+          throw new Error(`Missing trait for layer "${layer.name}".`);
+        }
+        return trait;
+      });
+
+      const blob = await compositeTraits(
+        orderedTraits,
+        get().canvasSize,
+        get().canvasSize,
+      );
+
+      if (previewUrlRef) URL.revokeObjectURL(previewUrlRef);
+      previewUrlRef = URL.createObjectURL(blob);
+
+      set({
+        previewTraits: traitInfo,
+        previewUrl: previewUrlRef,
+        previewDna: rolled.dna,
+        generationError: null,
+        isRollingDice: false,
+      });
+    } catch (error) {
+      set({
+        isRollingDice: false,
+        generationError:
+          error instanceof Error
+            ? error.message
+            : "Preview failed. Check that trait images are valid PNG/JPG files.",
+      });
+    }
   },
 
   startGeneration: async () => {
