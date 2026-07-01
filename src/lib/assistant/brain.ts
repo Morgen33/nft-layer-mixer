@@ -9,7 +9,7 @@ export interface AssistantReply {
 }
 
 const DEFAULT_SUGGESTIONS = [
-  "Laser Visor can't go with Crown Protocol",
+  "Horns never go with hoodies",
   "Roll the dice",
   "List my traits",
   "What's my status?",
@@ -155,7 +155,7 @@ export function processAssistantMessage(input: string): AssistantReply {
   }
 
   return reply(
-    `I didn't catch an action there. To **ban traits**, say it plainly:\n\n• "Laser Visor can't go with Crown Protocol"\n• "Ban Crown with Laser Visor"\n• "Crown and Halo can't be together"\n\nSay **list my traits** to see exact names.`,
+    `I didn't catch an action there. Try:\n\n• "Horns never go with hoodies"\n• "Ban Horns from all Jackets"\n• "All of those" (after I ask)\n\nSay **list** or **list my traits** to see names.`,
     DEFAULT_SUGGESTIONS,
   );
 }
@@ -163,9 +163,9 @@ export function processAssistantMessage(input: string): AssistantReply {
 export function getWelcomeMessage(): AssistantReply {
   const snap = getAssistantSnapshot();
   return reply(
-    `I'm your build assistant — tell me what shouldn't mix and I'll add the ban rules.\n\nTry: **"Laser Visor can't go with Crown Protocol"**\n\n${snap.traitCount} traits loaded · ${snap.exclusionCount} bans active.`,
+    `I'm your build assistant — tell me what shouldn't mix and I'll add the ban rules.\n\nTry: **"Horns never go with hoodies"** or **"Ban Horns from all Jackets"**\n\n${snap.traitCount} traits loaded · ${snap.exclusionCount} bans active.`,
     [
-      "Laser Visor can't go with Crown Protocol",
+      "Horns never go with hoodies",
       "List my traits",
       "Roll the dice",
       "List ban rules",
