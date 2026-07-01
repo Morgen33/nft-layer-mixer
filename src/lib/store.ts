@@ -106,6 +106,10 @@ interface GeneratorStore {
     sourceTraitId: string,
     targets: { layerId: string; traitId: string }[],
   ) => number;
+  addExclusionMatrix: (
+    sources: { layerId: string; traitId: string }[],
+    targets: { layerId: string; traitId: string }[],
+  ) => number;
   removeExclusion: (id: string) => void;
   clearExclusions: () => void;
 
@@ -516,19 +520,35 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   },
 
   addExclusionBatch: (sourceLayerId, sourceTraitId, targets) => {
+    return get().addExclusionMatrix(
+      [{ layerId: sourceLayerId, traitId: sourceTraitId }],
+      targets,
+    );
+  },
+
+  addExclusionMatrix: (sources, targets) => {
     const exclusions = [...get().exclusions];
     let added = 0;
 
-    for (const target of targets) {
-      const rule = {
-        layerAId: sourceLayerId,
-        traitAId: sourceTraitId,
-        layerBId: target.layerId,
-        traitBId: target.traitId,
-      };
-      if (isDuplicateExclusion(rule, exclusions)) continue;
-      exclusions.push({ ...rule, id: uid("exc") });
-      added++;
+    for (const source of sources) {
+      for (const target of targets) {
+        if (
+          source.layerId === target.layerId &&
+          source.traitId === target.traitId
+        ) {
+          continue;
+        }
+
+        const rule = {
+          layerAId: source.layerId,
+          traitAId: source.traitId,
+          layerBId: target.layerId,
+          traitBId: target.traitId,
+        };
+        if (isDuplicateExclusion(rule, exclusions)) continue;
+        exclusions.push({ ...rule, id: uid("exc") });
+        added++;
+      }
     }
 
     if (added > 0) {

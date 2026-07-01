@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, X } from "lucide-react";
 import { analyzeExclusions } from "@/lib/rules-engine";
 import { useGeneratorStore } from "@/lib/store";
+import type { Trait } from "@/lib/types";
 
 function formatBanLabel(
   sourceLayerName: string,
@@ -54,6 +55,67 @@ function LayerTraitRow({
   );
 }
 
+function TraitCheckboxList({
+  label,
+  traits,
+  selectedIds,
+  onToggle,
+  onSelectAll,
+  onClear,
+}: {
+  label: string;
+  traits: Trait[];
+  selectedIds: Set<string>;
+  onToggle: (traitId: string) => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between border-b border-zinc-800/80 px-1 pb-2">
+        <span className="text-xs font-medium text-zinc-400">{label}</span>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onSelectAll}
+            className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-200"
+          >
+            All
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-200"
+          >
+            None
+          </button>
+        </div>
+      </div>
+      <div className="max-h-32 space-y-0.5 overflow-y-auto">
+        {traits.map((trait) => (
+          <label
+            key={trait.id}
+            className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800/60"
+          >
+            <input
+              type="checkbox"
+              checked={selectedIds.has(trait.id)}
+              onChange={() => onToggle(trait.id)}
+              className="h-4 w-4 rounded accent-blue-500"
+            />
+            <span className="truncate">{trait.name}</span>
+          </label>
+        ))}
+        {traits.length === 0 && (
+          <p className="px-2 py-4 text-center text-xs text-zinc-600">
+            No traits in this layer
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function IncompatibilityRulesModal({
   open,
   onClose,
@@ -64,12 +126,12 @@ export function IncompatibilityRulesModal({
   const layers = useGeneratorStore((s) => s.layers);
   const dependencies = useGeneratorStore((s) => s.dependencies);
   const exclusions = useGeneratorStore((s) => s.exclusions);
-  const addExclusionBatch = useGeneratorStore((s) => s.addExclusionBatch);
+  const addExclusionMatrix = useGeneratorStore((s) => s.addExclusionMatrix);
   const removeExclusion = useGeneratorStore((s) => s.removeExclusion);
   const clearExclusions = useGeneratorStore((s) => s.clearExclusions);
 
   const [sourceLayerId, setSourceLayerId] = useState("");
-  const [sourceTraitId, setSourceTraitId] = useState("");
+  const [sourceTraitIds, setSourceTraitIds] = useState<Set<string>>(new Set());
   const [targetLayerId, setTargetLayerId] = useState("");
   const [targetTraitIds, setTargetTraitIds] = useState<Set<string>>(new Set());
   const [analysis, setAnalysis] = useState<string[] | null>(null);
@@ -87,11 +149,8 @@ export function IncompatibilityRulesModal({
   }, [open, layers]);
 
   useEffect(() => {
-    if (!sourceLayer) return;
-    if (!sourceLayer.traits.some((t) => t.id === sourceTraitId)) {
-      setSourceTraitId(sourceLayer.traits[0]?.id ?? "");
-    }
-  }, [sourceLayer, sourceTraitId]);
+    setSourceTraitIds(new Set());
+  }, [sourceLayerId]);
 
   useEffect(() => {
     setTargetTraitIds(new Set());
@@ -134,42 +193,45 @@ export function IncompatibilityRulesModal({
 
   if (!open) return null;
 
-  const toggleTargetTrait = (traitId: string) => {
-    setTargetTraitIds((current) => {
+  const toggleTrait = (
+    traitId: string,
+    setter: React.Dispatch<React.SetStateAction<Set<string>>>,
+  ) => {
+    setter((current) => {
       const next = new Set(current);
       if (next.has(traitId)) next.delete(traitId);
       else next.add(traitId);
       return next;
     });
-  };
-
-  const selectAllTargets = () => {
-    setTargetTraitIds(new Set(targetLayer?.traits.map((t) => t.id) ?? []));
-  };
-
-  const clearTargetSelection = () => {
-    setTargetTraitIds(new Set());
+    setFeedback(null);
   };
 
   const handleAddRule = () => {
-    if (!sourceLayerId || !sourceTraitId || !targetLayerId) {
-      setFeedback("Pick a main trait and at least one trait it cannot mix with.");
+    if (!sourceLayerId || !targetLayerId) {
+      setFeedback("Pick traits on both sides.");
       return;
     }
 
-    const targets = Array.from(targetTraitIds)
-      .filter(
-        (traitId) =>
-          traitId !== sourceTraitId || targetLayerId !== sourceLayerId,
-      )
-      .map((traitId) => ({ layerId: targetLayerId, traitId }));
+    const sources = Array.from(sourceTraitIds).map((traitId) => ({
+      layerId: sourceLayerId,
+      traitId,
+    }));
+    const targets = Array.from(targetTraitIds).map((traitId) => ({
+      layerId: targetLayerId,
+      traitId,
+    }));
+
+    if (sources.length === 0) {
+      setFeedback("Select at least one trait on top.");
+      return;
+    }
 
     if (targets.length === 0) {
-      setFeedback("Select at least one trait on the right that cannot mix.");
+      setFeedback("Select at least one trait on the bottom.");
       return;
     }
 
-    const added = addExclusionBatch(sourceLayerId, sourceTraitId, targets);
+    const added = addExclusionMatrix(sources, targets);
     if (added === 0) {
       setFeedback("Those bans already exist.");
       return;
@@ -177,7 +239,8 @@ export function IncompatibilityRulesModal({
 
     setFeedback(`Added ${added} ban${added === 1 ? "" : "s"}.`);
     setAnalysis(null);
-    clearTargetSelection();
+    setSourceTraitIds(new Set());
+    setTargetTraitIds(new Set());
   };
 
   const handleAnalyze = () => {
@@ -246,35 +309,21 @@ export function IncompatibilityRulesModal({
                 layers={layers}
                 onLayerChange={(id) => {
                   setSourceLayerId(id);
-                  setSourceTraitId("");
                   setFeedback(null);
                 }}
               >
-                <div className="max-h-32 space-y-0.5 overflow-y-auto">
-                  {sourceLayer?.traits.map((trait) => (
-                    <label
-                      key={trait.id}
-                      className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800/60"
-                    >
-                      <input
-                        type="radio"
-                        name="source-trait"
-                        checked={sourceTraitId === trait.id}
-                        onChange={() => {
-                          setSourceTraitId(trait.id);
-                          setFeedback(null);
-                        }}
-                        className="h-4 w-4 accent-blue-500"
-                      />
-                      <span className="truncate">{trait.name}</span>
-                    </label>
-                  ))}
-                  {sourceLayer?.traits.length === 0 && (
-                    <p className="px-2 py-4 text-center text-xs text-zinc-600">
-                      No traits in this layer
-                    </p>
-                  )}
-                </div>
+                <TraitCheckboxList
+                  label="Source Layer Items"
+                  traits={sourceLayer?.traits ?? []}
+                  selectedIds={sourceTraitIds}
+                  onToggle={(id) => toggleTrait(id, setSourceTraitIds)}
+                  onSelectAll={() =>
+                    setSourceTraitIds(
+                      new Set(sourceLayer?.traits.map((t) => t.id) ?? []),
+                    )
+                  }
+                  onClear={() => setSourceTraitIds(new Set())}
+                />
               </LayerTraitRow>
 
               <div className="rounded-lg border border-blue-500/30 bg-blue-950/40 px-4 py-2.5 text-center text-xs font-bold uppercase tracking-wide text-blue-200">
@@ -289,50 +338,18 @@ export function IncompatibilityRulesModal({
                   setFeedback(null);
                 }}
               >
-                <div>
-                  <div className="mb-2 flex items-center justify-between border-b border-zinc-800/80 px-1 pb-2">
-                    <span className="text-xs font-medium text-zinc-400">
-                      Target Layer Items
-                    </span>
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={selectAllTargets}
-                        className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-200"
-                      >
-                        All
-                      </button>
-                      <button
-                        type="button"
-                        onClick={clearTargetSelection}
-                        className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-200"
-                      >
-                        None
-                      </button>
-                    </div>
-                  </div>
-                  <div className="max-h-32 space-y-0.5 overflow-y-auto">
-                    {targetLayer?.traits.map((trait) => (
-                      <label
-                        key={trait.id}
-                        className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800/60"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={targetTraitIds.has(trait.id)}
-                          onChange={() => toggleTargetTrait(trait.id)}
-                          className="h-4 w-4 rounded accent-blue-500"
-                        />
-                        <span className="truncate">{trait.name}</span>
-                      </label>
-                    ))}
-                    {targetLayer?.traits.length === 0 && (
-                      <p className="px-2 py-4 text-center text-xs text-zinc-600">
-                        No traits in this layer
-                      </p>
-                    )}
-                  </div>
-                </div>
+                <TraitCheckboxList
+                  label="Target Layer Items"
+                  traits={targetLayer?.traits ?? []}
+                  selectedIds={targetTraitIds}
+                  onToggle={(id) => toggleTrait(id, setTargetTraitIds)}
+                  onSelectAll={() =>
+                    setTargetTraitIds(
+                      new Set(targetLayer?.traits.map((t) => t.id) ?? []),
+                    )
+                  }
+                  onClear={() => setTargetTraitIds(new Set())}
+                />
               </LayerTraitRow>
             </div>
 
@@ -379,8 +396,7 @@ export function IncompatibilityRulesModal({
             <div className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-zinc-800 bg-[#0f0f15] p-2">
               {sortedRules.length === 0 && (
                 <p className="px-2 py-8 text-center text-xs text-zinc-600">
-                  No bans yet. Pick a main layer trait, then choose what it
-                  cannot mix with.
+                  No bans yet. Pick traits on top and bottom, then add rules.
                 </p>
               )}
               {sortedRules.map((rule) => (
