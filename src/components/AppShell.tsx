@@ -2,24 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { BookOpen, Hexagon, ShieldBan } from "lucide-react";
+import { ProjectSaveMenu } from "@/components/ProjectSaveMenu";
 import { IncompatibilityRulesModal } from "@/components/IncompatibilityRulesModal";
 import { LeftPanel } from "@/components/panels/LeftPanel";
 import { CenterPanel } from "@/components/panels/CenterPanel";
 import { RightPanel } from "@/components/panels/RightPanel";
 import { GlowButton } from "@/components/ui/primitives";
+import { bootstrapProjectPersistence } from "@/lib/project-persistence";
 import { useGeneratorStore } from "@/lib/store";
 
 export function AppShell() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const exclusionCount = useGeneratorStore((s) => s.exclusions.length);
-  const initDemo = useGeneratorStore((s) => s.initDemo);
-  const layers = useGeneratorStore((s) => s.layers);
 
   useEffect(() => {
-    if (layers.length === 0) {
-      initDemo();
-    }
-  }, [initDemo, layers.length]);
+    void bootstrapProjectPersistence();
+  }, []);
 
   return (
     <div className="min-h-dvh bg-[#0d0d12] text-zinc-100 lg:flex lg:h-dvh lg:flex-col lg:overflow-hidden">
@@ -38,6 +36,7 @@ export function AppShell() {
           </div>
         </div>
         <div className="flex items-center justify-between gap-3 sm:justify-end sm:gap-4">
+          <ProjectSaveMenu />
           <GlowButton
             variant="ghost"
             className="flex flex-1 text-xs sm:flex-none"

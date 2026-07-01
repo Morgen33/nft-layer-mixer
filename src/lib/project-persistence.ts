@@ -1,0 +1,248 @@
+"use client";
+
+import {
+  AUTOSAVE_PROJECT_ID,
+  deleteProjectRecord,
+  listProjectRecords,
+  loadProjectRecord,
+  loadTraitImageUrl,
+  persistProject,
+  type PersistedProjectData,
+  type ProjectListItem,
+  type ProjectRecord,
+} from "./project-storage";
+import { revokeLayerUrls } from "./demo-data";
+import type { Layer } from "./types";
+import { useGeneratorStore } from "./store";
+
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+let autosaveUnsubscribe: (() => void) | null = null;
+
+function snapshotFromState(): PersistedProjectData {
+  const state = useGeneratorStore.getState();
+  return {
+    version: 1,
+    layers: state.layers.map((layer) => ({
+      id: layer.id,
+      name: layer.name,
+      order: layer.order,
+      optional: layer.optional,
+      traits: layer.traits.map((trait) => ({
+        id: trait.id,
+        name: trait.name,
+        weight: trait.weight,
+        tier: trait.tier,
+      })),
+    })),
+    dependencies: state.dependencies,
+    exclusions: state.exclusions,
+    metadataConfig: state.metadataConfig,
+    canvasSize: state.canvasSize,
+    editionSize: state.editionSize,
+  };
+}
+
+async function layersFromSnapshot(data: PersistedProjectData): Promise<Layer[]> {
+  const layers: Layer[] = [];
+
+  for (const layer of [...data.layers].sort((a, b) => a.order - b.order)) {
+    const traits = [];
+    for (const trait of layer.traits) {
+      const imageUrl = await loadTraitImageUrl(trait.id);
+      if (!imageUrl) continue;
+      traits.push({
+        ...trait,
+        imageUrl,
+      });
+    }
+    layers.push({
+      ...layer,
+      traits,
+    });
+  }
+
+  return layers;
+}
+
+function clearEphemeralState() {
+  useGeneratorStore.setState({
+    previewTraits: [],
+    previewUrl: null,
+    previewDna: "",
+    generatedAssets: [],
+    recentPreviews: [],
+    traitDistribution: {},
+    generationProgress: 0,
+    generationError: null,
+    isGenerating: false,
+    isRollingDice: false,
+  });
+}
+
+async function applyProjectRecord(record: ProjectRecord) {
+  const state = useGeneratorStore.getState();
+  revokeLayerUrls(state.layers);
+
+  const layers = await layersFromSnapshot(record.data);
+  if (layers.length === 0) {
+    throw new Error("Saved project is missing trait images.");
+  }
+
+  clearEphemeralState();
+  useGeneratorStore.setState({
+    layers,
+    dependencies: record.data.dependencies,
+    exclusions: record.data.exclusions,
+    metadataConfig: record.data.metadataConfig,
+    canvasSize: record.data.canvasSize,
+    editionSize: record.data.editionSize,
+    activeProjectId: record.id,
+    activeProjectName: record.name,
+    lastSavedAt: record.updatedAt,
+    persistenceError: null,
+  });
+}
+
+export async function saveCurrentProject(
+  id: string,
+  name: string,
+): Promise<void> {
+  const state = useGeneratorStore.getState();
+  if (state.layers.length === 0) {
+    throw new Error("Nothing to save yet — add layers or import art first.");
+  }
+
+  useGeneratorStore.setState({ isSaving: true, persistenceError: null });
+
+  try {
+    const updatedAt = Date.now();
+    const data = snapshotFromState();
+    const record: ProjectRecord = { id, name, updatedAt, data };
+    await persistProject(record, state.layers);
+    useGeneratorStore.setState({
+      activeProjectId: id,
+      activeProjectName: name,
+      lastSavedAt: updatedAt,
+      isSaving: false,
+    });
+  } catch (error) {
+    useGeneratorStore.setState({
+      isSaving: false,
+      persistenceError:
+        error instanceof Error ? error.message : "Could not save project.",
+    });
+    throw error;
+  }
+}
+
+export async function autosaveCurrentProject(): Promise<void> {
+  const state = useGeneratorStore.getState();
+  if (!state.persistenceReady || state.isGenerating || state.layers.length === 0) {
+    return;
+  }
+
+  const name =
+    state.metadataConfig.namePrefix.trim() || state.activeProjectName || "My Collection";
+
+  useGeneratorStore.setState({ isSaving: true });
+  try {
+    await saveCurrentProject(AUTOSAVE_PROJECT_ID, name);
+  } finally {
+    useGeneratorStore.setState({ isSaving: false });
+  }
+}
+
+export function scheduleAutosave() {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    void autosaveCurrentProject();
+  }, 1200);
+}
+
+export function startAutosaveListener() {
+  autosaveUnsubscribe?.();
+
+  autosaveUnsubscribe = useGeneratorStore.subscribe((state, prev) => {
+    if (!state.persistenceReady || state.isGenerating) return;
+
+    const changed =
+      state.layers !== prev.layers ||
+      state.dependencies !== prev.dependencies ||
+      state.exclusions !== prev.exclusions ||
+      state.metadataConfig !== prev.metadataConfig ||
+      state.canvasSize !== prev.canvasSize ||
+      state.editionSize !== prev.editionSize;
+
+    if (changed) scheduleAutosave();
+  });
+}
+
+export async function bootstrapProjectPersistence(): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  useGeneratorStore.setState({ persistenceReady: false });
+
+  try {
+    const autosave = await loadProjectRecord(AUTOSAVE_PROJECT_ID);
+    if (autosave && autosave.data.layers.length > 0) {
+      await applyProjectRecord(autosave);
+    } else {
+      useGeneratorStore.getState().initDemo();
+      useGeneratorStore.setState({
+        activeProjectId: AUTOSAVE_PROJECT_ID,
+        activeProjectName: "Demo Collection",
+        lastSavedAt: null,
+      });
+    }
+  } catch (error) {
+    useGeneratorStore.getState().initDemo();
+    useGeneratorStore.setState({
+      persistenceError:
+        error instanceof Error
+          ? error.message
+          : "Could not restore your last session.",
+    });
+  }
+
+  useGeneratorStore.setState({ persistenceReady: true });
+  startAutosaveListener();
+}
+
+export async function loadSavedProject(id: string): Promise<void> {
+  try {
+    const record = await loadProjectRecord(id);
+    if (!record) throw new Error("Saved project not found.");
+    await applyProjectRecord(record);
+    scheduleAutosave();
+  } catch (error) {
+    useGeneratorStore.setState({
+      persistenceError:
+        error instanceof Error ? error.message : "Could not load project.",
+    });
+    throw error;
+  }
+}
+
+export async function saveNamedProject(name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Enter a project name.");
+  const id = `project-${Date.now()}`;
+  await saveCurrentProject(id, trimmed);
+}
+
+export async function fetchSavedProjects(): Promise<ProjectListItem[]> {
+  return listProjectRecords().then((items) =>
+    items.filter((item) => item.id !== AUTOSAVE_PROJECT_ID),
+  );
+}
+
+export async function removeSavedProject(id: string): Promise<void> {
+  await deleteProjectRecord(id);
+  const state = useGeneratorStore.getState();
+  if (state.activeProjectId === id) {
+    useGeneratorStore.setState({
+      activeProjectId: AUTOSAVE_PROJECT_ID,
+      activeProjectName: state.metadataConfig.namePrefix,
+    });
+  }
+}
