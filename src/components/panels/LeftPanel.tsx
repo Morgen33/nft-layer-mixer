@@ -46,6 +46,10 @@ function LayerSection({
   const equalizeLayer = useGeneratorStore((s) => s.equalizeLayer);
   const importFilesIntoLayer = useGeneratorStore((s) => s.importFilesIntoLayer);
   const fileRef = React.useRef<HTMLInputElement>(null);
+  const folderRef = React.useRef<HTMLInputElement>(null);
+
+  const TRAIT_FILE_ACCEPT =
+    "image/png,image/jpeg,image/jpg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif";
 
   const handleLayerDrop = useCallback(
     (files: Parameters<typeof importFilesIntoLayer>[1]) =>
@@ -161,12 +165,38 @@ function LayerSection({
           className="text-xs py-1"
           onClick={() => fileRef.current?.click()}
         >
-          <Upload size={12} /> Upload
+          <Upload size={12} /> Images
+        </GlowButton>
+        <GlowButton
+          variant="ghost"
+          className="text-xs py-1"
+          onClick={() => folderRef.current?.click()}
+        >
+          <FolderOpen size={12} /> Folder
         </GlowButton>
         <input
           ref={fileRef}
           type="file"
-          accept="image/png,image/webp,image/jpeg"
+          accept={TRAIT_FILE_ACCEPT}
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files?.length) {
+              void importFilesIntoLayer(
+                layer.id,
+                Array.from(e.target.files).map((file) => ({
+                  file,
+                  relativePath: file.name,
+                })),
+              );
+              e.target.value = "";
+            }
+          }}
+        />
+        <input
+          ref={folderRef}
+          type="file"
+          accept={TRAIT_FILE_ACCEPT}
           multiple
           // @ts-expect-error webkitdirectory for folder pick
           webkitdirectory=""
@@ -193,7 +223,7 @@ function LayerSection({
       <div className="max-h-64 space-y-1.5 overflow-y-auto px-3 pb-3">
         {visibleTraits.length === 0 && (
           <p className="text-xs text-zinc-600 py-2 text-center">
-            Drop a folder here or upload trait PNGs
+            Drop images here, or use Images / Folder above
           </p>
         )}
         {tierFilter !== "all" && visibleTraits.length > 0 && (
