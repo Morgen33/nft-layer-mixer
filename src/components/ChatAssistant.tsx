@@ -198,7 +198,7 @@ export function ChatAssistant({
                 ref={inputRef}
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
-                placeholder="e.g. Laser Visor can't go with Crown…"
+                placeholder="e.g. Horns never go with hoodies…"
                 className="min-w-0 flex-1 rounded-xl border border-zinc-700 bg-[#0d0d12] px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-violet-500/50"
               />
               <button
