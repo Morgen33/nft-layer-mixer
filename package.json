@@ -6,12 +6,18 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "docs:manual-pdf": "node scripts/generate-user-manual-pdf.mjs",
+    "docs:screenshots": "node scripts/capture-manual-screenshots.mjs",
+    "docs:manual": "node scripts/capture-manual-screenshots.mjs && node scripts/generate-user-manual-pdf.mjs"
   },
   "dependencies": {
+    "jszip": "^3.10.1",
+    "lucide-react": "^1.17.0",
     "next": "16.2.6",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -20,6 +26,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "puppeteer": "^25.1.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
