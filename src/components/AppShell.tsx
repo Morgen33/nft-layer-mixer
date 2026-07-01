@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BookOpen, Hexagon, ShieldBan } from "lucide-react";
+import { ChatAssistant } from "@/components/ChatAssistant";
 import { ProjectSaveMenu } from "@/components/ProjectSaveMenu";
 import { IncompatibilityRulesModal } from "@/components/IncompatibilityRulesModal";
 import { LeftPanel } from "@/components/panels/LeftPanel";
@@ -82,6 +83,8 @@ export function AppShell() {
         open={rulesOpen}
         onClose={() => setRulesOpen(false)}
       />
+
+      <ChatAssistant onOpenRules={() => setRulesOpen(true)} />
     </div>
   );
 }
