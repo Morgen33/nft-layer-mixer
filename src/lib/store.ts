@@ -76,6 +76,13 @@ interface GeneratorStore {
   generationError: string | null;
   isRollingDice: boolean;
 
+  persistenceReady: boolean;
+  activeProjectId: string | null;
+  activeProjectName: string;
+  lastSavedAt: number | null;
+  persistenceError: string | null;
+  isSaving: boolean;
+
   initDemo: () => void;
   addLayer: (name: string) => void;
   removeLayer: (layerId: string) => void;
@@ -179,6 +186,12 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   traitDistribution: {},
   generationError: null,
   isRollingDice: false,
+  persistenceReady: false,
+  activeProjectId: null,
+  activeProjectName: "My Collection",
+  lastSavedAt: null,
+  persistenceError: null,
+  isSaving: false,
 
   initDemo: () => {
     const state = get();
