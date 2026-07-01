@@ -6,7 +6,81 @@ import type {
 } from "./types";
 import { pickWeightedTrait } from "./weighted-random";
 
-const MAX_ROLL_ATTEMPTS = 10_000;
+const MAX_RANDOM_ROLL_ATTEMPTS = 10_000;
+
+function buildDna(layers: Layer[], selection: Map<string, string>): string {
+  return layers
+    .map((layer) => {
+      const traitId = selection.get(layer.id);
+      const idx = layer.traits.findIndex((t) => t.id === traitId);
+      return String(idx >= 0 ? idx : 0);
+    })
+    .join("-");
+}
+
+function orderedCandidates(candidates: Trait[], randomize: boolean): Trait[] {
+  if (!randomize || candidates.length <= 1) return candidates;
+
+  const remaining = [...candidates];
+  const ordered: Trait[] = [];
+  while (remaining.length > 0) {
+    const picked = pickWeightedTrait(remaining);
+    ordered.push(picked);
+    remaining.splice(
+      remaining.findIndex((trait) => trait.id === picked.id),
+      1,
+    );
+  }
+  return ordered;
+}
+
+/**
+ * Backtracking search finds a valid trait combo under heavy ban/dependency rules.
+ * Random retries fail when many exclusions leave only a tiny valid set.
+ */
+export function findValidCombination(
+  layers: Layer[],
+  dependencies: DependencyRule[],
+  exclusions: ExclusionRule[],
+  existingDna: Set<string>,
+  randomize = true,
+): { selection: Map<string, string>; dna: string } | null {
+  const selection = new Map<string, string>();
+  let found: { selection: Map<string, string>; dna: string } | null = null;
+
+  function dfs(layerIndex: number): boolean {
+    if (found) return true;
+
+    if (layerIndex >= layers.length) {
+      const dna = buildDna(layers, selection);
+      if (existingDna.has(dna)) return false;
+      found = { selection: new Map(selection), dna };
+      return true;
+    }
+
+    const layer = layers[layerIndex];
+    if (layer.traits.length === 0) return false;
+
+    const forced = getForcedTrait(layer, selection, dependencies);
+    const candidates = orderedCandidates(
+      forced
+        ? filterCompatibleTraits(layer, [forced], selection, exclusions)
+        : filterCompatibleTraits(layer, layer.traits, selection, exclusions),
+      randomize,
+    );
+
+    for (const trait of candidates) {
+      selection.set(layer.id, trait.id);
+      if (dfs(layerIndex + 1)) return true;
+      selection.delete(layer.id);
+    }
+
+    return false;
+  }
+
+  dfs(0);
+  return found;
+}
 
 export function getForcedTrait(
   layer: Layer,
@@ -67,7 +141,17 @@ export function rollCombination(
   exclusions: ExclusionRule[],
   existingDna: Set<string>,
 ): { selection: Map<string, string>; dna: string } | null {
-  for (let attempt = 0; attempt < MAX_ROLL_ATTEMPTS; attempt++) {
+  const found = findValidCombination(
+    layers,
+    dependencies,
+    exclusions,
+    existingDna,
+    true,
+  );
+  if (found) return found;
+
+  // Fallback for edge cases where every DFS path hits a used DNA first.
+  for (let attempt = 0; attempt < MAX_RANDOM_ROLL_ATTEMPTS; attempt++) {
     const selection = new Map<string, string>();
 
     let valid = true;
@@ -110,13 +194,7 @@ export function rollCombination(
 
     if (!valid) continue;
 
-    const dna = layers
-      .map((layer) => {
-        const traitId = selection.get(layer.id);
-        const idx = layer.traits.findIndex((t) => t.id === traitId);
-        return String(idx >= 0 ? idx : 0);
-      })
-      .join("-");
+    const dna = buildDna(layers, selection);
 
     if (!existingDna.has(dna)) {
       return { selection, dna };

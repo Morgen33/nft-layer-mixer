@@ -6,7 +6,7 @@ import {
   type ComboSelection,
 } from "./combo-enumerator";
 import { traitPercentage } from "./rarity";
-import { rollCombination } from "./rules-engine";
+import { rollCombination, findValidCombination } from "./rules-engine";
 import type {
   DependencyRule,
   ExclusionRule,
@@ -182,7 +182,6 @@ export async function generateCollection(
   }
 
   const dnaSet = new Set<string>();
-  const maxRollAttempts = Math.max(50_000, count * 200);
 
   while (results.length < count) {
     if (signal?.aborted) throw new Error("Generation cancelled");
@@ -192,16 +191,22 @@ export async function generateCollection(
 
     for (let i = results.length; i < batchEnd; i++) {
       let rolled: ComboSelection | null = null;
-      for (let attempt = 0; attempt < maxRollAttempts; attempt++) {
-        const result = rollCombination(
+      rolled = findValidCombination(
+        layers,
+        dependencies,
+        exclusions,
+        dnaSet,
+        true,
+      );
+      if (!rolled) {
+        const fallback = rollCombination(
           layers,
           dependencies,
           exclusions,
           dnaSet,
         );
-        if (result) {
-          rolled = { dna: result.dna, selection: result.selection };
-          break;
+        if (fallback) {
+          rolled = { dna: fallback.dna, selection: fallback.selection };
         }
       }
       if (!rolled) {

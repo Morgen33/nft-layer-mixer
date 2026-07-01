@@ -608,7 +608,7 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
         set({
           isRollingDice: false,
           generationError:
-            "Could not roll a valid combination. Clear or loosen your Rules bans and try again.",
+            "No valid combinations left with your current rules. Remove a few bans or add more traits.",
         });
         return;
       }
