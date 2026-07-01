@@ -1,7 +1,11 @@
 import type { ResolvedTrait } from "./trait-resolver";
 import {
-  resolveTraitGroups,
+  expandBanPhrases,
+  getTraitsInLayer,
+  normalizeContractions,
   resolveTraitGroup,
+  resolveTraitGroups,
+  resolveTraitPattern,
   splitTraitList,
   summarizeTraitGroup,
 } from "./trait-resolver";
@@ -18,6 +22,8 @@ export interface ParsedIntent {
   preview: string;
   suggestions: string[];
 }
+
+const LARGE_BAN_THRESHOLD = 50;
 
 const BAN_SPLIT_PATTERNS = [
   /\s+don't\s+go\s+with\s+/i,
@@ -86,6 +92,29 @@ function formatAmbiguousHint(phrase: string, options: ResolvedTrait[]): string {
   return `"${phrase}" matches ${options.length} traits: ${preview}${extra}. Say **all of those** to ban every match.`;
 }
 
+function maybeConfirmLargeBan(
+  sources: ResolvedTrait[],
+  targets: ResolvedTrait[],
+  preview: string,
+): ParsedIntent {
+  const ruleCount = sources.length * targets.length;
+  if (ruleCount <= LARGE_BAN_THRESHOLD) {
+    clearPendingBan();
+    return {
+      action: { type: "add_bans", sources, targets },
+      preview,
+      suggestions: ["Roll the dice", "List ban rules", "What's my status?"],
+    };
+  }
+
+  setPendingBan({ sources, targets });
+  return {
+    action: { type: "none" },
+    preview: `${preview}\n\nThat's **${ruleCount.toLocaleString()}** ban rules (${sources.length} × ${targets.length}). Say **all of those** to confirm, or be more specific.`,
+    suggestions: ["All of those", "List my traits"],
+  };
+}
+
 function buildBanResult(
   leftPhrases: string[],
   rightPhrases: string[],
@@ -94,8 +123,8 @@ function buildBanResult(
   const right = resolveTraitGroups(rightPhrases);
 
   const problems: string[] = [
-    ...left.missing.map((p) => `Could not find "${p}". Try a trait name or layer like "Jackets".`),
-    ...right.missing.map((p) => `Could not find "${p}". Try "hoodies", "all jackets", or a trait name.`),
+    ...left.missing.map((p) => `Could not find "${p}". Try a trait name or "all jackets".`),
+    ...right.missing.map((p) => `Could not find "${p}". Try "front snap hats", "hoodies", or a trait name.`),
     ...left.ambiguous.map((a) => formatAmbiguousHint(a.phrase, a.options)),
     ...right.ambiguous.map((a) => formatAmbiguousHint(a.phrase, a.options)),
   ];
@@ -106,12 +135,11 @@ function buildBanResult(
       const uniqueTargets = targets.filter(
         (t, i, arr) => arr.findIndex((x) => x.traitId === t.traitId) === i,
       );
-      setPendingBan({ sources: left.resolved, targets: uniqueTargets });
-      return {
-        action: { type: "none" },
-        preview: `${problems.join("\n")}\n\nReady to ban ${summarizeTraitGroup(left.resolved, "traits")} from ${uniqueTargets.length} traits.`,
-        suggestions: ["All of those", "List my traits"],
-      };
+      return maybeConfirmLargeBan(
+        left.resolved,
+        uniqueTargets,
+        `${problems.join("\n")}\n\nReady to ban ${summarizeTraitGroup(left.resolved, "traits")} from ${summarizeTraitGroup(uniqueTargets, "targets")}.`,
+      );
     }
 
     return {
@@ -125,17 +153,11 @@ function buildBanResult(
     return null;
   }
 
-  clearPendingBan();
-
-  return {
-    action: {
-      type: "add_bans",
-      sources: left.resolved,
-      targets: right.resolved,
-    },
-    preview: `Adding ban rules so ${summarizeTraitGroup(left.resolved, "traits")} never mixes with ${summarizeTraitGroup(right.resolved, "targets")}.`,
-    suggestions: ["Roll the dice", "List ban rules", "What's my status?"],
-  };
+  return maybeConfirmLargeBan(
+    left.resolved,
+    right.resolved,
+    `Adding ban rules so ${summarizeTraitGroup(left.resolved, "traits")} never mixes with ${summarizeTraitGroup(right.resolved, "targets")}.`,
+  );
 }
 
 function buildCliqueBanResult(phrases: string[]): ParsedIntent | null {
@@ -164,8 +186,60 @@ function buildCliqueBanResult(phrases: string[]): ParsedIntent | null {
   };
 }
 
+function parseAllowlistIntent(input: string): ParsedIntent | null {
+  const text = normalizeContractions(input.trim());
+  const match = text.match(/^(.+?)\s+can\s+only\s+go\s+with\s+(.+)$/i);
+  if (!match) return null;
+
+  const sourceGroup = resolveTraitGroup(match[1]!);
+  if (sourceGroup.kind === "missing" || sourceGroup.traits.length === 0) {
+    return {
+      action: { type: "none" },
+      preview: `Could not find "${match[1]}".`,
+      suggestions: ["List my traits"],
+    };
+  }
+  if (sourceGroup.traits.length > 1) {
+    return {
+      action: { type: "none" },
+      preview: `"${match[1]}" matches multiple traits — name one accessory/trait.`,
+      suggestions: ["List my traits"],
+    };
+  }
+
+  const allowed = resolveTraitPattern(match[2]!);
+  if (allowed.length === 0) {
+    return {
+      action: { type: "none" },
+      preview: `Could not find allowed traits for "${match[2]}". Try "trans skins".`,
+      suggestions: ["List my traits"],
+    };
+  }
+
+  const allowedLayer = allowed[0]!.layerName;
+  const allInLayer = getTraitsInLayer(allowedLayer);
+  const disallowed = allInLayer.filter(
+    (trait) => !allowed.some((a) => a.traitId === trait.traitId),
+  );
+
+  if (disallowed.length === 0) {
+    return {
+      action: { type: "none" },
+      preview: "Every trait in that layer already matches the allowlist.",
+      suggestions: ["List my traits"],
+    };
+  }
+
+  const source = sourceGroup.traits[0]!;
+  return maybeConfirmLargeBan(
+    [source],
+    disallowed,
+    `**${source.traitName}** can only appear with ${summarizeTraitGroup(allowed, "allowed skins")} — banning it from ${summarizeTraitGroup(disallowed, "other traits")}.`,
+  );
+}
+
 function parseBanIntent(input: string): ParsedIntent | null {
-  const text = stripBanPrefix(input.trim());
+  const text = stripBanPrefix(normalizeContractions(input.trim()));
   const lower = text.toLowerCase();
 
   const hasBanCue =
@@ -178,7 +252,8 @@ function parseBanIntent(input: string): ParsedIntent | null {
   const pairSplit = splitByFirstPattern(text, BAN_SPLIT_PATTERNS);
   if (pairSplit) {
     const [leftText, rightText] = pairSplit;
-    return buildBanResult(splitTraitList(leftText), splitTraitList(rightText));
+    const { left, right } = expandBanPhrases(leftText, rightText);
+    return buildBanResult(left, right);
   }
 
   for (const pattern of BAN_TOGETHER_PATTERNS) {
@@ -193,10 +268,8 @@ function parseBanIntent(input: string): ParsedIntent | null {
     const rest = text.replace(/^ban\s+/i, "");
     const withSplit = rest.split(/\s+with\s+/i);
     if (withSplit.length === 2) {
-      return buildBanResult(
-        splitTraitList(withSplit[0]!),
-        splitTraitList(withSplit[1]!),
-      );
+      const { left, right } = expandBanPhrases(withSplit[0]!, withSplit[1]!);
+      return buildBanResult(left, right);
     }
   }
 
@@ -204,7 +277,7 @@ function parseBanIntent(input: string): ParsedIntent | null {
 }
 
 function parseLayerOnlyBan(input: string): ParsedIntent | null {
-  const text = input.trim();
+  const text = normalizeContractions(input.trim());
   const match = text.match(
     /^(?:ban\s+)?(.+?)\s+(?:from|with|against)\s+(?:all\s+)?(?:traits?\s+)?(?:under|in)\s+(?:the\s+)?(.+)$/i,
   );
@@ -225,7 +298,7 @@ function parseFollowUpBan(): ParsedIntent | null {
       sources: pending.sources,
       targets: pending.targets,
     },
-    preview: `Banning ${summarizeTraitGroup(pending.sources, "traits")} from ${summarizeTraitGroup(pending.targets, "traits")}.`,
+    preview: `Banning ${summarizeTraitGroup(pending.sources, "traits")} from ${summarizeTraitGroup(pending.targets, "targets")}.`,
     suggestions: ["Roll the dice", "List ban rules"],
   };
 }
@@ -238,7 +311,7 @@ export function parseFollowUpIntent(input: string): ParsedIntent | null {
 }
 
 function parseDependencyIntent(input: string): ParsedIntent | null {
-  const text = input.trim();
+  const text = normalizeContractions(input.trim());
   const lower = text.toLowerCase();
 
   const hasDepCue =
@@ -325,7 +398,10 @@ function parseListTraitsIntent(input: string): ParsedIntent | null {
     return {
       action: { type: "list_traits" },
       preview: "Listing traits in your project…",
-      suggestions: ["Horns never go with hoodies", "List ban rules"],
+      suggestions: [
+        "Big Eyes thrice never go with front snap hats",
+        "Pills pack can only go with trans skins",
+      ],
     };
   }
   return null;
@@ -347,7 +423,7 @@ function parseLayerBrowseIntent(input: string): ParsedIntent | null {
   const match = text.match(/^(?:under|in|show)\s+(?:the\s+)?(.+)$/i);
   if (!match) return null;
 
-  const group = resolveTraitGroup(match[1]!);
+  const group = resolveTraitGroup(`all ${match[1]!}`);
   if (group.kind !== "layer" || group.traits.length === 0) return null;
 
   const names = group.traits.map((t) => t.traitName).join(", ");
@@ -362,15 +438,17 @@ function parseLayerBrowseIntent(input: string): ParsedIntent | null {
 }
 
 export function parseActionIntent(input: string): ParsedIntent | null {
+  const normalized = normalizeContractions(input);
   return (
-    parseFollowUpIntent(input) ??
-    parseBanIntent(input) ??
-    parseLayerOnlyBan(input) ??
-    parseDependencyIntent(input) ??
-    parseClearBansIntent(input) ??
-    parseListBansIntent(input) ??
-    parseListTraitsIntent(input) ??
-    parseLayerBrowseIntent(input)
+    parseFollowUpIntent(normalized) ??
+    parseAllowlistIntent(normalized) ??
+    parseBanIntent(normalized) ??
+    parseLayerOnlyBan(normalized) ??
+    parseDependencyIntent(normalized) ??
+    parseClearBansIntent(normalized) ??
+    parseListBansIntent(normalized) ??
+    parseListTraitsIntent(normalized) ??
+    parseLayerBrowseIntent(normalized)
   );
 }
 
