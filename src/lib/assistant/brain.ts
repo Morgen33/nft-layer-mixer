@@ -155,7 +155,7 @@ export function processAssistantMessage(input: string): AssistantReply {
   }
 
   return reply(
-    `I didn't catch an action there. Try:\n\n• "Horns never go with hoodies"\n• "Ban Horns from all Jackets"\n• "All of those" (after I ask)\n\nSay **list** or **list my traits** to see names.`,
+    `I didn't catch an action there. Try:\n\n• "Big Eyes thrice don't go with front snap hats including biz cap"\n• "Pills pack can only go with trans skins"\n• "Horns never go with hoodies"\n\nSay **list** to see trait names.`,
     DEFAULT_SUGGESTIONS,
   );
 }
@@ -163,11 +163,11 @@ export function processAssistantMessage(input: string): AssistantReply {
 export function getWelcomeMessage(): AssistantReply {
   const snap = getAssistantSnapshot();
   return reply(
-    `I'm your build assistant — tell me what shouldn't mix and I'll add the ban rules.\n\nTry: **"Horns never go with hoodies"** or **"Ban Horns from all Jackets"**\n\n${snap.traitCount} traits loaded · ${snap.exclusionCount} bans active.`,
+    `I'm your build assistant — tell me what shouldn't mix and I'll add the ban rules.\n\nTry: **"Big Eyes thrice never go with front snap hats"** or **"Pills pack can only go with trans skins"**\n\n${snap.traitCount} traits loaded · ${snap.exclusionCount} bans active.`,
     [
-      "Horns never go with hoodies",
+      "Big Eyes thrice never go with front snap hats",
+      "Pills pack can only go with trans skins",
       "List my traits",
-      "Roll the dice",
       "List ban rules",
     ],
   );
