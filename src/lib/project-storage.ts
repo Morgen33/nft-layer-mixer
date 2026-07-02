@@ -86,17 +86,33 @@ async function imageUrlToBlob(url: string): Promise<Blob> {
   return response.blob();
 }
 
+async function yieldToBrowser(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
 export async function persistProject(
   record: ProjectRecord,
   layers: Layer[],
+  options?: { writeImages?: boolean },
 ): Promise<void> {
+  const writeImages = options?.writeImages !== false;
   const imageEntries: { traitId: string; blob: Blob }[] = [];
-  for (const layer of layers) {
-    for (const trait of layer.traits) {
-      imageEntries.push({
-        traitId: trait.id,
-        blob: await imageUrlToBlob(trait.imageUrl),
-      });
+
+  if (writeImages) {
+    let processed = 0;
+    for (const layer of layers) {
+      for (const trait of layer.traits) {
+        imageEntries.push({
+          traitId: trait.id,
+          blob: await imageUrlToBlob(trait.imageUrl),
+        });
+        processed += 1;
+        if (processed % 8 === 0) {
+          await yieldToBrowser();
+        }
+      }
     }
   }
 
@@ -105,9 +121,12 @@ export async function persistProject(
   const projects = tx.objectStore(PROJECTS_STORE);
   const images = tx.objectStore(IMAGES_STORE);
 
-  for (const entry of imageEntries) {
-    images.put(entry.blob, entry.traitId);
+  if (writeImages) {
+    for (const entry of imageEntries) {
+      images.put(entry.blob, entry.traitId);
+    }
   }
+
   projects.put(record);
   await txDone(tx);
   db.close();

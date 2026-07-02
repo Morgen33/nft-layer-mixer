@@ -157,8 +157,12 @@ export function IncompatibilityRulesModal({
   }, [targetLayerId]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      document.body.style.overflow = "";
+      return;
+    }
 
+    const previousOverflow = document.body.style.overflow;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
@@ -166,7 +170,7 @@ export function IncompatibilityRulesModal({
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", onKeyDown);
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [open, onClose]);
@@ -257,6 +261,9 @@ export function IncompatibilityRulesModal({
     setAnalysis(null);
     setFeedback("All bans cleared.");
   };
+
+  const visibleRules = sortedRules.slice(0, 100);
+  const hiddenRuleCount = Math.max(0, sortedRules.length - visibleRules.length);
 
   return (
     <div
@@ -399,7 +406,7 @@ export function IncompatibilityRulesModal({
                   No bans yet. Pick traits on top and bottom, then add rules.
                 </p>
               )}
-              {sortedRules.map((rule) => (
+              {visibleRules.map((rule) => (
                 <div
                   key={rule.id}
                   className="flex items-center justify-between gap-3 rounded-lg bg-[#1a1a24] px-3 py-2.5"
@@ -418,6 +425,11 @@ export function IncompatibilityRulesModal({
                   </button>
                 </div>
               ))}
+              {hiddenRuleCount > 0 && (
+                <p className="px-2 py-3 text-center text-xs text-zinc-500">
+                  Showing first 100 of {sortedRules.length.toLocaleString()} bans.
+                </p>
+              )}
             </div>
           </section>
         </div>

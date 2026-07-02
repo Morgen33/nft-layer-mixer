@@ -18,6 +18,9 @@ export function AppShell() {
 
   useEffect(() => {
     void bootstrapProjectPersistence();
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, []);
 
   return (

@@ -1,4 +1,4 @@
-import { saveNamedProject } from "@/lib/project-persistence";
+import { saveNamedProject, resumeAutosave, suspendAutosave } from "@/lib/project-persistence";
 import { useGeneratorStore } from "@/lib/store";
 import {
   formatTraitRef,
@@ -75,31 +75,41 @@ export async function runAssistantAction(
     }
 
     case "add_bans": {
-      const added = store.addExclusionMatrix(
-        toRefs(action.sources),
-        toRefs(action.targets),
-      );
-      if (added === 0) {
-        return "Those bans were already in place — no new rules added.";
+      suspendAutosave();
+      try {
+        const added = store.addExclusionMatrix(
+          toRefs(action.sources),
+          toRefs(action.targets),
+        );
+        if (added === 0) {
+          return "Those bans were already in place — no new rules added.";
+        }
+        return `Added **${added}** ban rule${added === 1 ? "" : "s"}. Roll the Dice and Generate will respect them automatically.`;
+      } finally {
+        resumeAutosave();
       }
-      return `Added **${added}** ban rule${added === 1 ? "" : "s"}. Roll the Dice and Generate will respect them automatically.`;
     }
 
     case "add_bans_clique": {
-      let total = 0;
-      const traits = action.traits;
-      for (let i = 0; i < traits.length; i++) {
-        for (let j = i + 1; j < traits.length; j++) {
-          total += store.addExclusionMatrix(
-            toRefs([traits[i]!]),
-            toRefs([traits[j]!]),
-          );
+      suspendAutosave();
+      try {
+        let total = 0;
+        const traits = action.traits;
+        for (let i = 0; i < traits.length; i++) {
+          for (let j = i + 1; j < traits.length; j++) {
+            total += store.addExclusionMatrix(
+              toRefs([traits[i]!]),
+              toRefs([traits[j]!]),
+            );
+          }
         }
+        if (total === 0) {
+          return "Those pairwise bans already exist.";
+        }
+        return `Added **${total}** ban rule${total === 1 ? "" : "s"} so those traits never appear together.`;
+      } finally {
+        resumeAutosave();
       }
-      if (total === 0) {
-        return "Those pairwise bans already exist.";
-      }
-      return `Added **${total}** ban rule${total === 1 ? "" : "s"} so those traits never appear together.`;
     }
 
     case "add_dependency": {
