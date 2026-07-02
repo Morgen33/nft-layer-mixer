@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   collectFilesFromDataTransfer,
@@ -43,6 +43,16 @@ export function FolderDropZone({
     },
     [disabled, onDrop],
   );
+
+  useEffect(() => {
+    const resetDrag = () => setDragOver(false);
+    window.addEventListener("dragend", resetDrag);
+    window.addEventListener("drop", resetDrag);
+    return () => {
+      window.removeEventListener("dragend", resetDrag);
+      window.removeEventListener("drop", resetDrag);
+    };
+  }, []);
 
   return (
     <div

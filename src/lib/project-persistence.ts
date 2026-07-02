@@ -17,6 +17,25 @@ import { useGeneratorStore } from "./store";
 
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let autosaveUnsubscribe: (() => void) | null = null;
+let autosaveSuspended = 0;
+let lastSavedLayerFingerprint: string | null = null;
+
+function layerFingerprint(layers: Layer[]): string {
+  return JSON.stringify(
+    layers.map((layer) => ({
+      id: layer.id,
+      traits: layer.traits.map((trait) => trait.id),
+    })),
+  );
+}
+
+export function suspendAutosave(): void {
+  autosaveSuspended += 1;
+}
+
+export function resumeAutosave(): void {
+  autosaveSuspended = Math.max(0, autosaveSuspended - 1);
+}
 
 function snapshotFromState(): PersistedProjectData {
   const state = useGeneratorStore.getState();
@@ -101,6 +120,7 @@ async function applyProjectRecord(record: ProjectRecord) {
     lastSavedAt: record.updatedAt,
     persistenceError: null,
   });
+  lastSavedLayerFingerprint = layerFingerprint(layers);
 }
 
 export async function saveCurrentProject(
@@ -118,7 +138,10 @@ export async function saveCurrentProject(
     const updatedAt = Date.now();
     const data = snapshotFromState();
     const record: ProjectRecord = { id, name, updatedAt, data };
-    await persistProject(record, state.layers);
+    const fingerprint = layerFingerprint(state.layers);
+    const writeImages = fingerprint !== lastSavedLayerFingerprint;
+    await persistProject(record, state.layers, { writeImages });
+    lastSavedLayerFingerprint = fingerprint;
     useGeneratorStore.setState({
       activeProjectId: id,
       activeProjectName: name,
@@ -137,7 +160,12 @@ export async function saveCurrentProject(
 
 export async function autosaveCurrentProject(): Promise<void> {
   const state = useGeneratorStore.getState();
-  if (!state.persistenceReady || state.isGenerating || state.layers.length === 0) {
+  if (
+    autosaveSuspended > 0 ||
+    !state.persistenceReady ||
+    state.isGenerating ||
+    state.layers.length === 0
+  ) {
     return;
   }
 

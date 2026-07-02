@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FolderOpen, Save, Trash2 } from "lucide-react";
 import { GlowButton } from "@/components/ui/primitives";
 import {
@@ -25,6 +25,7 @@ function formatSavedAt(timestamp: number | null): string {
 export function ProjectSaveMenu() {
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const menuRef = useRef<HTMLDivElement>(null);
   const isSaving = useGeneratorStore((s) => s.isSaving);
   const lastSavedAt = useGeneratorStore((s) => s.lastSavedAt);
   const activeProjectName = useGeneratorStore((s) => s.activeProjectName);
@@ -35,6 +36,27 @@ export function ProjectSaveMenu() {
     if (!open) return;
     void fetchSavedProjects().then(setProjects);
   }, [open, lastSavedAt]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("mousedown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("mousedown", onPointerDown);
+    };
+  }, [open]);
 
   const handleSave = async () => {
     const defaultName = useGeneratorStore.getState().metadataConfig.namePrefix;
@@ -65,7 +87,7 @@ export function ProjectSaveMenu() {
   };
 
   return (
-    <div className="relative">
+    <div ref={menuRef} className="relative">
       <div className="flex items-center gap-2">
         <span className="hidden text-[10px] text-zinc-500 xl:inline">
           {isSaving ? "Saving…" : formatSavedAt(lastSavedAt)}
@@ -97,57 +119,49 @@ export function ProjectSaveMenu() {
       )}
 
       {open && (
-        <>
-          <button
-            type="button"
-            className="fixed inset-0 z-40"
-            aria-label="Close saved projects"
-            onClick={() => setOpen(false)}
-          />
-          <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-zinc-800 bg-[#14141c] shadow-2xl">
-            <div className="border-b border-zinc-800 px-3 py-2">
-              <p className="text-xs font-semibold text-zinc-200">Saved Projects</p>
-              <p className="text-[10px] text-zinc-500">
-                Auto-saves on change. Refresh brings your last session back.
-              </p>
-            </div>
-            <div className="max-h-64 overflow-y-auto p-2">
-              {projects.length === 0 && (
-                <p className="px-2 py-4 text-center text-xs text-zinc-600">
-                  No named saves yet. Click Save to keep a snapshot.
-                </p>
-              )}
-              {projects.map((project) => (
-                <div
-                  key={project.id}
-                  className="mb-1 flex items-center gap-2 rounded-lg border border-zinc-800 bg-[#0f0f15] px-2 py-2"
-                >
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => void handleLoad(project.id)}
-                  >
-                    <div className="truncate text-xs font-medium text-zinc-200">
-                      {project.name}
-                    </div>
-                    <div className="text-[10px] text-zinc-500">
-                      {project.layerCount} layers · {project.traitCount} traits ·{" "}
-                      {new Date(project.updatedAt).toLocaleDateString()}
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded p-1 text-zinc-500 hover:text-red-400"
-                    onClick={() => void handleDelete(project.id, project.name)}
-                    aria-label={`Delete ${project.name}`}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
+        <div className="absolute right-0 top-full z-50 mt-2 w-72 overflow-hidden rounded-xl border border-zinc-800 bg-[#14141c] shadow-2xl">
+          <div className="border-b border-zinc-800 px-3 py-2">
+            <p className="text-xs font-semibold text-zinc-200">Saved Projects</p>
+            <p className="text-[10px] text-zinc-500">
+              Auto-saves on change. Refresh brings your last session back.
+            </p>
           </div>
-        </>
+          <div className="max-h-64 overflow-y-auto p-2">
+            {projects.length === 0 && (
+              <p className="px-2 py-4 text-center text-xs text-zinc-600">
+                No named saves yet. Click Save to keep a snapshot.
+              </p>
+            )}
+            {projects.map((project) => (
+              <div
+                key={project.id}
+                className="mb-1 flex items-center gap-2 rounded-lg border border-zinc-800 bg-[#0f0f15] px-2 py-2"
+              >
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left"
+                  onClick={() => void handleLoad(project.id)}
+                >
+                  <div className="truncate text-xs font-medium text-zinc-200">
+                    {project.name}
+                  </div>
+                  <div className="text-[10px] text-zinc-500">
+                    {project.layerCount} layers · {project.traitCount} traits ·{" "}
+                    {new Date(project.updatedAt).toLocaleDateString()}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="rounded p-1 text-zinc-500 hover:text-red-400"
+                  onClick={() => void handleDelete(project.id, project.name)}
+                  aria-label={`Delete ${project.name}`}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
