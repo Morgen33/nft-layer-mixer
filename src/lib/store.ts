@@ -72,6 +72,7 @@ interface GeneratorStore {
   generationEta: number;
   recentPreviews: GeneratedAsset[];
   generatedAssets: GeneratedAsset[];
+  generatedCanvasSize: number | null;
   traitDistribution: Record<string, Record<string, number>>;
   generationError: string | null;
   isRollingDice: boolean;
@@ -183,6 +184,7 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   generationEta: 0,
   recentPreviews: [],
   generatedAssets: [],
+  generatedCanvasSize: null,
   traitDistribution: {},
   generationError: null,
   isRollingDice: false,
@@ -586,7 +588,10 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
     set({ metadataConfig: { ...get().metadataConfig, ...config } });
   },
 
-  setCanvasSize: (size) => set({ canvasSize: size }),
+  setCanvasSize: (size) => {
+    const clamped = Math.min(4096, Math.max(256, Math.round(size)));
+    set({ canvasSize: clamped });
+  },
   setEditionSize: (size) => set({ editionSize: Math.max(1, size) }),
 
   rollDice: async () => {
@@ -764,6 +769,7 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
 
       set({
         generatedAssets: assets,
+        generatedCanvasSize: state.canvasSize,
         traitDistribution: buildTraitDistribution(assets),
         isGenerating: false,
       });
@@ -784,20 +790,48 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   },
 
   exportZip: async () => {
-    const { generatedAssets, metadataConfig } = get();
-    if (generatedAssets.length === 0) return;
+    const { generatedAssets, metadataConfig, canvasSize, generatedCanvasSize } =
+      get();
+
+    if (generatedAssets.length === 0) {
+      set({
+        generationError:
+          "Nothing to export yet. Click Generate in the center panel first.",
+      });
+      return;
+    }
+
+    if (generatedCanvasSize !== null && generatedCanvasSize !== canvasSize) {
+      set({
+        generationError: `Your collection was generated at ${generatedCanvasSize}×${generatedCanvasSize}px, but canvas is now ${canvasSize}×${canvasSize}px. Click Generate again at the new size, then export.`,
+      });
+      return;
+    }
+
     const slug =
       metadataConfig.namePrefix
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "") || "collection";
-    await exportCollectionZip(generatedAssets, metadataConfig, slug);
+
+    try {
+      await exportCollectionZip(generatedAssets, metadataConfig, slug);
+      set({ generationError: null });
+    } catch (error) {
+      set({
+        generationError:
+          error instanceof Error
+            ? error.message
+            : "Export failed. Try generating a smaller edition or lower canvas size.",
+      });
+    }
   },
 
   clearGeneration: () => {
     revokeAssetUrls(get().generatedAssets);
     set({
       generatedAssets: [],
+      generatedCanvasSize: null,
       recentPreviews: [],
       traitDistribution: {},
       generationProgress: 0,

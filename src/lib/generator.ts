@@ -70,12 +70,20 @@ function buildMetadata(
   };
 }
 
-function resolveBatchSize(count: number, explicit?: number): number {
+function resolveBatchSize(
+  count: number,
+  canvasSize: number,
+  explicit?: number,
+): number {
   if (explicit) return explicit;
-  if (count >= 10_000) return 48;
-  if (count >= 1_000) return 32;
-  if (count >= 200) return 16;
-  return 8;
+  let batch = 8;
+  if (count >= 10_000) batch = 48;
+  else if (count >= 1_000) batch = 32;
+  else if (count >= 200) batch = 16;
+
+  if (canvasSize >= 2048) return Math.max(2, Math.floor(batch / 4));
+  if (canvasSize >= 1024) return Math.max(4, Math.floor(batch / 2));
+  return batch;
 }
 
 async function compositeJobs(
@@ -128,7 +136,7 @@ export async function generateCollection(
     batchSize: explicitBatchSize,
   } = opts;
 
-  const batchSize = resolveBatchSize(count, explicitBatchSize);
+  const batchSize = resolveBatchSize(count, canvasSize, explicitBatchSize);
   const { count: validCount, exact: validExact } = countValidCombinations(
     layers,
     dependencies,

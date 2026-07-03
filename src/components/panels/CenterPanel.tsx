@@ -91,6 +91,8 @@ export function CenterPanel() {
   const recentPreviews = useGeneratorStore((s) => s.recentPreviews);
   const traitDistribution = useGeneratorStore((s) => s.traitDistribution);
   const generatedAssets = useGeneratorStore((s) => s.generatedAssets);
+  const generatedCanvasSize = useGeneratorStore((s) => s.generatedCanvasSize);
+  const canvasSize = useGeneratorStore((s) => s.canvasSize);
   const layers = useGeneratorStore((s) => s.layers);
   const editionSize = useGeneratorStore((s) => s.editionSize);
   const getMaxCombinations = useGeneratorStore((s) => s.getMaxCombinations);
@@ -103,6 +105,10 @@ export function CenterPanel() {
   const maxCombos = getMaxCombinations();
   const maxCombosLabel = getMaxCombinationsLabel();
   const blocked = editionSize > maxCombos;
+  const exportStale =
+    generatedAssets.length > 0 &&
+    generatedCanvasSize !== null &&
+    generatedCanvasSize !== canvasSize;
   const progressPct =
     generationTotal > 0
       ? Math.round((generationProgress / generationTotal) * 100)
@@ -193,6 +199,13 @@ export function CenterPanel() {
             accent={isGenerating ? "#eab308" : "#84cc16"}
           />
         </div>
+
+        {exportStale && (
+          <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            Canvas is {canvasSize}px but your last run was {generatedCanvasSize}px.
+            Generate again before exporting.
+          </div>
+        )}
 
         {blocked && (
           <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-400 space-y-1">
