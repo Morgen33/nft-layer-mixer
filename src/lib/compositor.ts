@@ -25,6 +25,8 @@ export async function compositeTraits(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas not supported");
 
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.clearRect(0, 0, width, height);
 
   for (const trait of traits) {

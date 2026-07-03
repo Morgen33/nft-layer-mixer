@@ -4,6 +4,8 @@ import { Download, FileJson, Package, Settings2, Trash2 } from "lucide-react";
 import { GlowButton, Panel, StatPill } from "@/components/ui/primitives";
 import { useGeneratorStore } from "@/lib/store";
 
+const CANVAS_PRESETS = [512, 1024, 2048] as const;
+
 export function RightPanel() {
   const metadataConfig = useGeneratorStore((s) => s.metadataConfig);
   const setMetadataConfig = useGeneratorStore((s) => s.setMetadataConfig);
@@ -12,7 +14,9 @@ export function RightPanel() {
   const editionSize = useGeneratorStore((s) => s.editionSize);
   const setEditionSize = useGeneratorStore((s) => s.setEditionSize);
   const generatedAssets = useGeneratorStore((s) => s.generatedAssets);
+  const generatedCanvasSize = useGeneratorStore((s) => s.generatedCanvasSize);
   const isGenerating = useGeneratorStore((s) => s.isGenerating);
+  const generationError = useGeneratorStore((s) => s.generationError);
   const exportZip = useGeneratorStore((s) => s.exportZip);
   const clearGeneration = useGeneratorStore((s) => s.clearGeneration);
   const getMaxCombinationsLabel = useGeneratorStore((s) => s.getMaxCombinationsLabel);
@@ -22,6 +26,10 @@ export function RightPanel() {
 
   const maxCombos = getMaxCombinations();
   const blocked = editionSize > maxCombos;
+  const exportStale =
+    generatedAssets.length > 0 &&
+    generatedCanvasSize !== null &&
+    generatedCanvasSize !== canvasSize;
 
   const inputClass =
     "w-full rounded-lg border border-zinc-700 bg-[#0d0d12] px-3 py-2.5 text-sm text-zinc-200 outline-none focus:border-violet-500/50 sm:py-2";
@@ -128,15 +136,35 @@ export function RightPanel() {
           )}
           <label className="block">
             <span className="text-xs text-zinc-500">Canvas Size (px)</span>
-            <select
+            <p className="mb-2 text-[10px] leading-relaxed text-zinc-600">
+              Match your layer art size (e.g. 1024 or 2048). Higher = sharper but
+              slower and uses more memory. After changing, click Generate again.
+            </p>
+            <div className="mb-2 flex flex-wrap gap-2">
+              {CANVAS_PRESETS.map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  onClick={() => setCanvasSize(size)}
+                  className={`rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors ${
+                    canvasSize === size
+                      ? "border-violet-500/50 bg-violet-500/10 text-violet-300"
+                      : "border-zinc-700 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
+                  }`}
+                >
+                  {size}px
+                </button>
+              ))}
+            </div>
+            <input
+              type="number"
+              min={256}
+              max={4096}
+              step={1}
               className={inputClass}
               value={canvasSize}
-              onChange={(e) => setCanvasSize(parseInt(e.target.value))}
-            >
-              <option value={512}>512 × 512</option>
-              <option value={1024}>1024 × 1024</option>
-              <option value={2048}>2048 × 2048</option>
-            </select>
+              onChange={(e) => setCanvasSize(parseInt(e.target.value) || 512)}
+            />
           </label>
         </div>
 
@@ -152,6 +180,11 @@ export function RightPanel() {
             accent="#22c55e"
           />
         </div>
+        {generatedCanvasSize !== null && generatedAssets.length > 0 && (
+          <p className="mt-2 text-[10px] text-zinc-500">
+            Last generation: {generatedCanvasSize}×{generatedCanvasSize}px
+          </p>
+        )}
       </Panel>
 
       <Panel title="Export" icon={<Package size={16} className="text-emerald-400" />}>
@@ -160,14 +193,35 @@ export function RightPanel() {
           metadata.json master manifest, and optional solana.json.
         </p>
 
+        {exportStale && (
+          <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            Canvas size changed to {canvasSize}px but your images are still at{" "}
+            {generatedCanvasSize}px. Click <strong>Generate</strong> again, then export.
+          </div>
+        )}
+
+        {generationError && (
+          <div className="mb-3 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+            {generationError}
+          </div>
+        )}
+
         <GlowButton
           variant="primary"
           className="w-full mb-2"
-          disabled={generatedAssets.length === 0 || isGenerating}
-          onClick={exportZip}
+          disabled={
+            generatedAssets.length === 0 || isGenerating || exportStale
+          }
+          onClick={() => void exportZip()}
         >
           <Download size={14} /> Export Collection ZIP
         </GlowButton>
+
+        {exportStale && (
+          <p className="mb-2 text-center text-[10px] text-zinc-500">
+            Export locked until you regenerate at {canvasSize}px
+          </p>
+        )}
 
         {generatedAssets.length > 0 && (
           <GlowButton
