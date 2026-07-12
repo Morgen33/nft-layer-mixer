@@ -2,23 +2,33 @@
 
 import {
   AUTOSAVE_PROJECT_ID,
+  deleteGeneratedRecord,
   deleteProjectRecord,
   listProjectRecords,
+  loadGeneratedRecord,
   loadProjectRecord,
   loadTraitImageUrl,
+  persistGeneratedAssets,
   persistProject,
   type PersistedProjectData,
   type ProjectListItem,
   type ProjectRecord,
 } from "./project-storage";
+import { buildTraitDistribution } from "./generator";
+import { revokeAssetUrls } from "./zip-export";
 import { revokeLayerUrls } from "./demo-data";
-import type { Layer } from "./types";
+import type { GeneratedAsset, Layer } from "./types";
 import { useGeneratorStore } from "./store";
 
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+let generatedSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let autosaveUnsubscribe: (() => void) | null = null;
 let autosaveSuspended = 0;
 let lastSavedLayerFingerprint: string | null = null;
+
+function activeProjectKey(): string {
+  return useGeneratorStore.getState().activeProjectId ?? AUTOSAVE_PROJECT_ID;
+}
 
 function layerFingerprint(layers: Layer[]): string {
   return JSON.stringify(
@@ -101,6 +111,7 @@ function clearEphemeralState() {
 async function applyProjectRecord(record: ProjectRecord) {
   const state = useGeneratorStore.getState();
   revokeLayerUrls(state.layers);
+  revokeAssetUrls(state.generatedAssets);
 
   const layers = await layersFromSnapshot(record.data);
   if (layers.length === 0) {
@@ -115,12 +126,15 @@ async function applyProjectRecord(record: ProjectRecord) {
     metadataConfig: record.data.metadataConfig,
     canvasSize: record.data.canvasSize,
     editionSize: record.data.editionSize,
+    generatedCanvasSize: null,
     activeProjectId: record.id,
     activeProjectName: record.name,
     lastSavedAt: record.updatedAt,
     persistenceError: null,
   });
   lastSavedLayerFingerprint = layerFingerprint(layers);
+
+  await restoreGeneratedAssets(record.id);
 }
 
 export async function saveCurrentProject(
@@ -187,11 +201,45 @@ export function scheduleAutosave() {
   }, 1200);
 }
 
+async function saveGeneratedAssets(): Promise<void> {
+  const state = useGeneratorStore.getState();
+  if (!state.persistenceReady) return;
+
+  try {
+    if (state.generatedAssets.length === 0) {
+      await deleteGeneratedRecord(activeProjectKey());
+    } else {
+      await persistGeneratedAssets(
+        activeProjectKey(),
+        state.generatedCanvasSize ?? state.canvasSize,
+        state.generatedAssets,
+      );
+    }
+  } catch {
+    // Non-fatal: the in-memory collection is still exportable this session.
+  }
+}
+
+function scheduleGeneratedSave() {
+  if (generatedSaveTimer) clearTimeout(generatedSaveTimer);
+  generatedSaveTimer = setTimeout(() => {
+    void saveGeneratedAssets();
+  }, 400);
+}
+
 export function startAutosaveListener() {
   autosaveUnsubscribe?.();
 
   autosaveUnsubscribe = useGeneratorStore.subscribe((state, prev) => {
-    if (!state.persistenceReady || state.isGenerating) return;
+    if (!state.persistenceReady) return;
+
+    // Persist the generated collection once a run finishes (or is cleared),
+    // but never mid-generation when assets churn on every progress tick.
+    if (!state.isGenerating && state.generatedAssets !== prev.generatedAssets) {
+      scheduleGeneratedSave();
+    }
+
+    if (state.isGenerating) return;
 
     const changed =
       state.layers !== prev.layers ||
@@ -202,6 +250,28 @@ export function startAutosaveListener() {
       state.editionSize !== prev.editionSize;
 
     if (changed) scheduleAutosave();
+  });
+}
+
+async function restoreGeneratedAssets(projectId: string): Promise<void> {
+  const record = await loadGeneratedRecord(projectId);
+  if (!record || record.assets.length === 0) return;
+
+  const assets: GeneratedAsset[] = record.assets.map((asset) => ({
+    edition: asset.edition,
+    dna: asset.dna,
+    imageBlob: asset.imageBlob,
+    previewUrl: URL.createObjectURL(asset.imageBlob),
+    metadata: asset.metadata,
+    traits: asset.traits,
+  }));
+
+  useGeneratorStore.setState({
+    generatedAssets: assets,
+    generatedCanvasSize: record.canvasSize,
+    traitDistribution: buildTraitDistribution(assets),
+    generationProgress: assets.length,
+    generationTotal: assets.length,
   });
 }
 

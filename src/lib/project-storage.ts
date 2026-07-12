@@ -3,15 +3,34 @@
 import type {
   DependencyRule,
   ExclusionRule,
+  GeneratedAsset,
   Layer,
   MetadataConfig,
+  NftMetadata,
+  SelectedTraitInfo,
 } from "./types";
 
 export const AUTOSAVE_PROJECT_ID = "__autosave__";
 const DB_NAME = "nft-layer-mixer";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const PROJECTS_STORE = "projects";
 const IMAGES_STORE = "images";
+const GENERATED_STORE = "generated";
+
+export interface PersistedGeneratedAsset {
+  edition: number;
+  dna: string;
+  imageBlob: Blob;
+  metadata: NftMetadata;
+  traits: SelectedTraitInfo[];
+}
+
+export interface GeneratedRecord {
+  id: string;
+  canvasSize: number;
+  updatedAt: number;
+  assets: PersistedGeneratedAsset[];
+}
 
 export interface PersistedTrait {
   id: string;
@@ -64,6 +83,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(IMAGES_STORE)) {
         db.createObjectStore(IMAGES_STORE);
+      }
+      if (!db.objectStoreNames.contains(GENERATED_STORE)) {
+        db.createObjectStore(GENERATED_STORE, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -205,6 +227,58 @@ export async function deleteProjectRecord(id: string): Promise<void> {
     }
   }
 
+  await txDone(tx);
+  db.close();
+}
+
+export async function persistGeneratedAssets(
+  id: string,
+  canvasSize: number,
+  assets: GeneratedAsset[],
+): Promise<void> {
+  const record: GeneratedRecord = {
+    id,
+    canvasSize,
+    updatedAt: Date.now(),
+    assets: assets.map((asset) => ({
+      edition: asset.edition,
+      dna: asset.dna,
+      imageBlob: asset.imageBlob,
+      metadata: asset.metadata,
+      traits: asset.traits,
+    })),
+  };
+
+  const db = await openDb();
+  const tx = db.transaction(GENERATED_STORE, "readwrite");
+  tx.objectStore(GENERATED_STORE).put(record);
+  await txDone(tx);
+  db.close();
+}
+
+export async function loadGeneratedRecord(
+  id: string,
+): Promise<GeneratedRecord | null> {
+  const db = await openDb();
+  const tx = db.transaction(GENERATED_STORE, "readonly");
+  const store = tx.objectStore(GENERATED_STORE);
+  const record = await new Promise<GeneratedRecord | undefined>(
+    (resolve, reject) => {
+      const request = store.get(id);
+      request.onsuccess = () =>
+        resolve(request.result as GeneratedRecord | undefined);
+      request.onerror = () => reject(request.error);
+    },
+  );
+  await txDone(tx);
+  db.close();
+  return record ?? null;
+}
+
+export async function deleteGeneratedRecord(id: string): Promise<void> {
+  const db = await openDb();
+  const tx = db.transaction(GENERATED_STORE, "readwrite");
+  tx.objectStore(GENERATED_STORE).delete(id);
   await txDone(tx);
   db.close();
 }
