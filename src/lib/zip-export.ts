@@ -5,6 +5,7 @@ export async function exportCollectionZip(
   assets: GeneratedAsset[],
   config: MetadataConfig,
   slug: string,
+  onProgress?: (percent: number) => void,
 ): Promise<void> {
   const zip = new JSZip();
   const images = zip.folder("images");
@@ -14,7 +15,8 @@ export async function exportCollectionZip(
 
   for (const asset of assets) {
     const index = asset.edition - 1;
-    images?.file(`${index}.png`, asset.imageBlob);
+    // PNGs are already compressed; storing them avoids slow, pointless re-compression.
+    images?.file(`${index}.png`, asset.imageBlob, { compression: "STORE" });
     metadataFolder?.file(`${index}.json`, JSON.stringify(asset.metadata, null, 2));
   }
 
@@ -59,12 +61,29 @@ export async function exportCollectionZip(
   const traitReport = buildTraitReport(assets);
   zip.file("rarity-report.json", JSON.stringify(traitReport, null, 2));
 
-  const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
+  const blob = await zip.generateAsync(
+    { type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } },
+    (meta) => onProgress?.(Math.round(meta.percent)),
+  );
+
+  triggerDownload(blob, `${slug || "collection"}-${Date.now()}.zip`);
+}
+
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `${slug || "collection"}-${Date.now()}.zip`;
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(a.href);
+  // Defer revoke so the browser has time to start the download before the URL
+  // is released; revoking synchronously can silently cancel large downloads.
+  window.setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 10_000);
 }
 
 function buildTraitReport(assets: GeneratedAsset[]) {

@@ -16,6 +16,8 @@ export function RightPanel() {
   const generatedAssets = useGeneratorStore((s) => s.generatedAssets);
   const generatedCanvasSize = useGeneratorStore((s) => s.generatedCanvasSize);
   const isGenerating = useGeneratorStore((s) => s.isGenerating);
+  const isExporting = useGeneratorStore((s) => s.isExporting);
+  const exportProgress = useGeneratorStore((s) => s.exportProgress);
   const generationError = useGeneratorStore((s) => s.generationError);
   const exportZip = useGeneratorStore((s) => s.exportZip);
   const clearGeneration = useGeneratorStore((s) => s.clearGeneration);
@@ -210,12 +212,27 @@ export function RightPanel() {
           variant="primary"
           className="w-full mb-2"
           disabled={
-            generatedAssets.length === 0 || isGenerating || exportStale
+            generatedAssets.length === 0 ||
+            isGenerating ||
+            isExporting ||
+            exportStale
           }
           onClick={() => void exportZip()}
         >
-          <Download size={14} /> Export Collection ZIP
+          <Download size={14} />{" "}
+          {isExporting
+            ? `Building ZIP… ${exportProgress}%`
+            : "Export Collection ZIP"}
         </GlowButton>
+
+        {isExporting && (
+          <div className="mb-2 h-2 overflow-hidden rounded-full bg-zinc-800">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-violet-500 transition-all duration-200"
+              style={{ width: `${exportProgress}%` }}
+            />
+          </div>
+        )}
 
         {exportStale && (
           <p className="mb-2 text-center text-[10px] text-zinc-500">

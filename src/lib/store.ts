@@ -77,6 +77,9 @@ interface GeneratorStore {
   generationError: string | null;
   isRollingDice: boolean;
 
+  isExporting: boolean;
+  exportProgress: number;
+
   persistenceReady: boolean;
   activeProjectId: string | null;
   activeProjectName: string;
@@ -188,6 +191,8 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   traitDistribution: {},
   generationError: null,
   isRollingDice: false,
+  isExporting: false,
+  exportProgress: 0,
   persistenceReady: false,
   activeProjectId: null,
   activeProjectName: "My Collection",
@@ -808,17 +813,24 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
       return;
     }
 
+    if (get().isExporting) return;
+
     const slug =
       metadataConfig.namePrefix
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "") || "collection";
 
+    set({ isExporting: true, exportProgress: 0, generationError: null });
     try {
-      await exportCollectionZip(generatedAssets, metadataConfig, slug);
-      set({ generationError: null });
+      await exportCollectionZip(generatedAssets, metadataConfig, slug, (pct) => {
+        set({ exportProgress: pct });
+      });
+      set({ isExporting: false, exportProgress: 100, generationError: null });
     } catch (error) {
       set({
+        isExporting: false,
+        exportProgress: 0,
         generationError:
           error instanceof Error
             ? error.message
