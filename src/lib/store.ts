@@ -27,6 +27,7 @@ import {
 } from "./layer-presets";
 import {
   isDuplicateExclusion,
+  exclusionRuleKey,
   rollCombination,
 } from "./rules-engine";
 import {
@@ -549,7 +550,17 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   },
 
   addExclusionMatrix: (sources, targets) => {
-    const exclusions = [...get().exclusions];
+    const MAX_EXCLUSIONS = 200;
+    const existing = get().exclusions;
+    if (existing.length >= MAX_EXCLUSIONS) {
+      set({
+        generationError: `Ban limit reached (${MAX_EXCLUSIONS}). Clear some rules before adding more — too many bans freeze the browser.`,
+      });
+      return 0;
+    }
+
+    const exclusions = [...existing];
+    const seen = new Set(exclusions.map((rule) => exclusionRuleKey(rule)));
     let added = 0;
 
     for (const source of sources) {
@@ -567,14 +578,25 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
           layerBId: target.layerId,
           traitBId: target.traitId,
         };
-        if (isDuplicateExclusion(rule, exclusions)) continue;
+        const key = exclusionRuleKey(rule);
+        if (seen.has(key)) continue;
+        if (exclusions.length >= MAX_EXCLUSIONS) break;
+
         exclusions.push({ ...rule, id: uid("exc") });
+        seen.add(key);
         added++;
       }
+      if (exclusions.length >= MAX_EXCLUSIONS) break;
     }
 
     if (added > 0) {
-      set({ exclusions });
+      set({
+        exclusions,
+        generationError:
+          exclusions.length >= MAX_EXCLUSIONS
+            ? `Added ${added} bans (hit the ${MAX_EXCLUSIONS} limit). Clear unused rules if rolls feel stuck.`
+            : null,
+      });
     }
     return added;
   },

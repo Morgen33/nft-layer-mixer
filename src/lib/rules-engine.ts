@@ -6,9 +6,9 @@ import type {
 } from "./types";
 import { pickWeightedTrait } from "./weighted-random";
 
-const MAX_RANDOM_ROLL_ATTEMPTS = 200;
-const MAX_DFS_NODES = 25_000;
-const MAX_ROLL_MS = 400;
+const MAX_RANDOM_ROLL_ATTEMPTS = 80;
+const MAX_DFS_NODES = 8_000;
+const MAX_ROLL_MS = 150;
 
 function buildDna(layers: Layer[], selection: Map<string, string>): string {
   return layers
