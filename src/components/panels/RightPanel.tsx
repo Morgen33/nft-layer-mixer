@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Download, FileJson, Package, Settings2, Trash2 } from "lucide-react";
 import { GlowButton, Panel, StatPill } from "@/components/ui/primitives";
 import { useGeneratorStore } from "@/lib/store";
@@ -25,8 +26,19 @@ export function RightPanel() {
   const getCollectionSizeHint = useGeneratorStore((s) => s.getCollectionSizeHint);
   const getMaxCombinations = useGeneratorStore((s) => s.getMaxCombinations);
   const layers = useGeneratorStore((s) => s.layers);
+  const exclusions = useGeneratorStore((s) => s.exclusions);
+  const dependencies = useGeneratorStore((s) => s.dependencies);
 
-  const maxCombos = getMaxCombinations();
+  const maxCombos = useMemo(
+    () => getMaxCombinations(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layers, exclusions, dependencies, getMaxCombinations],
+  );
+  const maxCombosLabel = useMemo(
+    () => getMaxCombinationsLabel(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layers, exclusions, dependencies, getMaxCombinationsLabel],
+  );
   const blocked = editionSize > maxCombos;
   const exportStale =
     generatedAssets.length > 0 &&
@@ -173,7 +185,7 @@ export function RightPanel() {
         <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <StatPill
             label="Max Unique"
-            value={getMaxCombinationsLabel()}
+            value={maxCombosLabel}
             accent="#a855f7"
           />
           <StatPill

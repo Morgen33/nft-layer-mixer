@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import {
   Dices,
   Dna,
@@ -94,6 +95,8 @@ export function CenterPanel() {
   const generatedCanvasSize = useGeneratorStore((s) => s.generatedCanvasSize);
   const canvasSize = useGeneratorStore((s) => s.canvasSize);
   const layers = useGeneratorStore((s) => s.layers);
+  const exclusions = useGeneratorStore((s) => s.exclusions);
+  const dependencies = useGeneratorStore((s) => s.dependencies);
   const editionSize = useGeneratorStore((s) => s.editionSize);
   const getMaxCombinations = useGeneratorStore((s) => s.getMaxCombinations);
   const getMaxCombinationsLabel = useGeneratorStore((s) => s.getMaxCombinationsLabel);
@@ -102,8 +105,16 @@ export function CenterPanel() {
   const cancelGeneration = useGeneratorStore((s) => s.cancelGeneration);
   const generationError = useGeneratorStore((s) => s.generationError);
 
-  const maxCombos = getMaxCombinations();
-  const maxCombosLabel = getMaxCombinationsLabel();
+  const maxCombos = useMemo(
+    () => getMaxCombinations(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layers, exclusions, dependencies, getMaxCombinations],
+  );
+  const maxCombosLabel = useMemo(
+    () => getMaxCombinationsLabel(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layers, exclusions, dependencies, getMaxCombinationsLabel],
+  );
   const blocked = editionSize > maxCombos;
   const exportStale =
     generatedAssets.length > 0 &&
