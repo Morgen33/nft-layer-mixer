@@ -742,40 +742,54 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
         onProgress: (current, total, asset) => {
           const elapsed = performance.now() - startTime;
           set((s) => {
-            const generatedAssets = asset
-              ? [...s.generatedAssets, asset]
-              : s.generatedAssets;
+            let generatedAssets = s.generatedAssets;
+            let recentPreviews = s.recentPreviews;
 
-            const trimmedAssets = generatedAssets.map((entry, index) => {
-              if (
-                index < generatedAssets.length - 4 &&
-                entry.previewUrl.startsWith("blob:")
-              ) {
-                URL.revokeObjectURL(entry.previewUrl);
-                return { ...entry, previewUrl: "" };
+            if (asset) {
+              generatedAssets = [...generatedAssets, asset];
+              // Revoke only the one preview that just fell out of the live window.
+              if (generatedAssets.length > 4) {
+                const staleIndex = generatedAssets.length - 5;
+                const stale = generatedAssets[staleIndex];
+                if (stale?.previewUrl) {
+                  URL.revokeObjectURL(stale.previewUrl);
+                  generatedAssets[staleIndex] = { ...stale, previewUrl: "" };
+                }
               }
-              return entry;
-            });
+              recentPreviews = [...recentPreviews, asset].slice(-4);
+            }
+
+            const updateDist =
+              current === total || current % 25 === 0 || current === 1;
 
             return {
               generationProgress: current,
               generationTotal: total,
               generationSpeed: computeGenerationSpeed(current, elapsed),
               generationEta: computeEta(current, total, elapsed),
-              recentPreviews: asset
-                ? [...s.recentPreviews, asset].slice(-4)
-                : s.recentPreviews,
-              generatedAssets: trimmedAssets,
-              traitDistribution: buildTraitDistribution(trimmedAssets),
+              recentPreviews,
+              generatedAssets,
+              ...(updateDist
+                ? {
+                    traitDistribution: buildTraitDistribution(generatedAssets),
+                  }
+                : {}),
             };
           });
         },
       });
 
+      // Keep export blobs; drop most preview URLs so the UI stays light.
+      const finalized = assets.map((asset, index) => {
+        if (index >= assets.length - 4) return asset;
+        if (asset.previewUrl) URL.revokeObjectURL(asset.previewUrl);
+        return { ...asset, previewUrl: "" };
+      });
+
       set({
-        generatedAssets: assets,
+        generatedAssets: finalized,
         generatedCanvasSize: state.canvasSize,
-        traitDistribution: buildTraitDistribution(assets),
+        traitDistribution: buildTraitDistribution(finalized),
         isGenerating: false,
       });
     } catch (e) {

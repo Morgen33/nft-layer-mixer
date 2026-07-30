@@ -11,16 +11,19 @@ import type {
 } from "./types";
 
 export const AUTOSAVE_PROJECT_ID = "__autosave__";
+/** Above this, skip auto-saving generated images to keep the UI responsive. */
+export const MAX_PERSISTED_GENERATED = 400;
+
 const DB_NAME = "nft-layer-mixer";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const PROJECTS_STORE = "projects";
 const IMAGES_STORE = "images";
 const GENERATED_STORE = "generated";
+const GENERATED_IMAGES_STORE = "generated-images";
 
-export interface PersistedGeneratedAsset {
+export interface PersistedGeneratedMeta {
   edition: number;
   dna: string;
-  imageBlob: Blob;
   metadata: NftMetadata;
   traits: SelectedTraitInfo[];
 }
@@ -29,7 +32,7 @@ export interface GeneratedRecord {
   id: string;
   canvasSize: number;
   updatedAt: number;
-  assets: PersistedGeneratedAsset[];
+  assets: PersistedGeneratedMeta[];
 }
 
 export interface PersistedTrait {
@@ -87,6 +90,9 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(GENERATED_STORE)) {
         db.createObjectStore(GENERATED_STORE, { keyPath: "id" });
       }
+      if (!db.objectStoreNames.contains(GENERATED_IMAGES_STORE)) {
+        db.createObjectStore(GENERATED_IMAGES_STORE);
+      }
     };
     request.onsuccess = () => resolve(request.result);
   });
@@ -100,18 +106,22 @@ function txDone(tx: IDBTransaction): Promise<void> {
   });
 }
 
+async function yieldToBrowser(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
+function generatedImageKey(projectId: string, edition: number): string {
+  return `${projectId}:${edition}`;
+}
+
 async function imageUrlToBlob(url: string): Promise<Blob> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Could not read trait image for save.");
   }
   return response.blob();
-}
-
-async function yieldToBrowser(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    window.setTimeout(resolve, 0);
-  });
 }
 
 export async function persistProject(
@@ -216,14 +226,32 @@ export async function deleteProjectRecord(id: string): Promise<void> {
   if (!record) return;
 
   const db = await openDb();
-  const tx = db.transaction([PROJECTS_STORE, IMAGES_STORE], "readwrite");
+  const tx = db.transaction(
+    [PROJECTS_STORE, IMAGES_STORE, GENERATED_STORE, GENERATED_IMAGES_STORE],
+    "readwrite",
+  );
   const projects = tx.objectStore(PROJECTS_STORE);
   const images = tx.objectStore(IMAGES_STORE);
+  const generated = tx.objectStore(GENERATED_STORE);
+  const generatedImages = tx.objectStore(GENERATED_IMAGES_STORE);
 
   projects.delete(id);
   for (const layer of record.data.layers) {
     for (const trait of layer.traits) {
       images.delete(trait.id);
+    }
+  }
+
+  const existing = await new Promise<GeneratedRecord | undefined>((resolve, reject) => {
+    const request = generated.get(id);
+    request.onsuccess = () =>
+      resolve(request.result as GeneratedRecord | undefined);
+    request.onerror = () => reject(request.error);
+  });
+  generated.delete(id);
+  if (existing?.assets) {
+    for (const asset of existing.assets) {
+      generatedImages.delete(generatedImageKey(id, asset.edition));
     }
   }
 
@@ -235,7 +263,37 @@ export async function persistGeneratedAssets(
   id: string,
   canvasSize: number,
   assets: GeneratedAsset[],
-): Promise<void> {
+): Promise<{ saved: boolean; reason?: string }> {
+  if (assets.length === 0) {
+    await deleteGeneratedRecord(id);
+    return { saved: true };
+  }
+
+  if (assets.length > MAX_PERSISTED_GENERATED) {
+    await deleteGeneratedRecord(id);
+    return {
+      saved: false,
+      reason: `Collection has ${assets.length.toLocaleString()} NFTs — too large to auto-save in the browser. Export the ZIP to keep them.`,
+    };
+  }
+
+  // Clear previous images first so we don't leave orphans.
+  await deleteGeneratedRecord(id);
+
+  const chunkSize = 8;
+  for (let i = 0; i < assets.length; i += chunkSize) {
+    const chunk = assets.slice(i, i + chunkSize);
+    const db = await openDb();
+    const tx = db.transaction(GENERATED_IMAGES_STORE, "readwrite");
+    const store = tx.objectStore(GENERATED_IMAGES_STORE);
+    for (const asset of chunk) {
+      store.put(asset.imageBlob, generatedImageKey(id, asset.edition));
+    }
+    await txDone(tx);
+    db.close();
+    await yieldToBrowser();
+  }
+
   const record: GeneratedRecord = {
     id,
     canvasSize,
@@ -243,7 +301,6 @@ export async function persistGeneratedAssets(
     assets: assets.map((asset) => ({
       edition: asset.edition,
       dna: asset.dna,
-      imageBlob: asset.imageBlob,
       metadata: asset.metadata,
       traits: asset.traits,
     })),
@@ -254,31 +311,109 @@ export async function persistGeneratedAssets(
   tx.objectStore(GENERATED_STORE).put(record);
   await txDone(tx);
   db.close();
+
+  return { saved: true };
 }
 
 export async function loadGeneratedRecord(
   id: string,
-): Promise<GeneratedRecord | null> {
+): Promise<{
+  canvasSize: number;
+  assets: GeneratedAsset[];
+} | null> {
   const db = await openDb();
-  const tx = db.transaction(GENERATED_STORE, "readonly");
-  const store = tx.objectStore(GENERATED_STORE);
-  const record = await new Promise<GeneratedRecord | undefined>(
-    (resolve, reject) => {
-      const request = store.get(id);
-      request.onsuccess = () =>
-        resolve(request.result as GeneratedRecord | undefined);
-      request.onerror = () => reject(request.error);
-    },
-  );
-  await txDone(tx);
+  const metaTx = db.transaction(GENERATED_STORE, "readonly");
+  const metaStore = metaTx.objectStore(GENERATED_STORE);
+  const record = await new Promise<
+    | (GeneratedRecord & { assets: Array<PersistedGeneratedMeta & { imageBlob?: Blob }> })
+    | undefined
+  >((resolve, reject) => {
+    const request = metaStore.get(id);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  await txDone(metaTx);
+
+  if (!record || !record.assets?.length) {
+    db.close();
+    return null;
+  }
+
+  // Legacy v2 format stored blobs inline — drop it (would freeze on restore).
+  const hasInlineBlobs = record.assets.some((asset) => {
+    const legacy = asset as PersistedGeneratedMeta & { imageBlob?: Blob };
+    return legacy.imageBlob instanceof Blob;
+  });
+  if (hasInlineBlobs) {
+    db.close();
+    await deleteGeneratedRecord(id);
+    return null;
+  }
+
+  const assets: GeneratedAsset[] = [];
+  const chunkSize = 16;
+  for (let i = 0; i < record.assets.length; i += chunkSize) {
+    const chunk = record.assets.slice(i, i + chunkSize);
+    const imgTx = db.transaction(GENERATED_IMAGES_STORE, "readonly");
+    const imgStore = imgTx.objectStore(GENERATED_IMAGES_STORE);
+
+    const blobs = await Promise.all(
+      chunk.map(
+        (asset) =>
+          new Promise<Blob | undefined>((resolve, reject) => {
+            const request = imgStore.get(generatedImageKey(id, asset.edition));
+            request.onsuccess = () => resolve(request.result as Blob | undefined);
+            request.onerror = () => reject(request.error);
+          }),
+      ),
+    );
+    await txDone(imgTx);
+
+    for (let j = 0; j < chunk.length; j++) {
+      const meta = chunk[j]!;
+      const blob = blobs[j];
+      if (!blob) continue;
+      assets.push({
+        edition: meta.edition,
+        dna: meta.dna,
+        imageBlob: blob,
+        // Only the UI's last-20 list needs previews — create those later.
+        previewUrl: "",
+        metadata: meta.metadata,
+        traits: meta.traits,
+      });
+    }
+
+    await yieldToBrowser();
+  }
+
   db.close();
-  return record ?? null;
+  if (assets.length === 0) return null;
+  return { canvasSize: record.canvasSize, assets };
 }
 
 export async function deleteGeneratedRecord(id: string): Promise<void> {
   const db = await openDb();
-  const tx = db.transaction(GENERATED_STORE, "readwrite");
+  const metaTx = db.transaction(GENERATED_STORE, "readonly");
+  const existing = await new Promise<GeneratedRecord | undefined>((resolve, reject) => {
+    const request = metaTx.objectStore(GENERATED_STORE).get(id);
+    request.onsuccess = () =>
+      resolve(request.result as GeneratedRecord | undefined);
+    request.onerror = () => reject(request.error);
+  });
+  await txDone(metaTx);
+
+  const tx = db.transaction(
+    [GENERATED_STORE, GENERATED_IMAGES_STORE],
+    "readwrite",
+  );
   tx.objectStore(GENERATED_STORE).delete(id);
+  if (existing?.assets) {
+    const images = tx.objectStore(GENERATED_IMAGES_STORE);
+    for (const asset of existing.assets) {
+      images.delete(generatedImageKey(id, asset.edition));
+    }
+  }
   await txDone(tx);
   db.close();
 }
