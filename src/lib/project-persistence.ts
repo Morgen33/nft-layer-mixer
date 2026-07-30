@@ -208,12 +208,19 @@ async function saveGeneratedAssets(): Promise<void> {
   try {
     if (state.generatedAssets.length === 0) {
       await deleteGeneratedRecord(activeProjectKey());
-    } else {
-      await persistGeneratedAssets(
-        activeProjectKey(),
-        state.generatedCanvasSize ?? state.canvasSize,
-        state.generatedAssets,
-      );
+      return;
+    }
+
+    const result = await persistGeneratedAssets(
+      activeProjectKey(),
+      state.generatedCanvasSize ?? state.canvasSize,
+      state.generatedAssets,
+    );
+
+    if (!result.saved && result.reason) {
+      useGeneratorStore.setState({
+        persistenceError: result.reason,
+      });
     }
   } catch {
     // Non-fatal: the in-memory collection is still exportable this session.
@@ -224,7 +231,7 @@ function scheduleGeneratedSave() {
   if (generatedSaveTimer) clearTimeout(generatedSaveTimer);
   generatedSaveTimer = setTimeout(() => {
     void saveGeneratedAssets();
-  }, 400);
+  }, 1500);
 }
 
 export function startAutosaveListener() {
@@ -254,25 +261,35 @@ export function startAutosaveListener() {
 }
 
 async function restoreGeneratedAssets(projectId: string): Promise<void> {
-  const record = await loadGeneratedRecord(projectId);
-  if (!record || record.assets.length === 0) return;
+  try {
+    const record = await loadGeneratedRecord(projectId);
+    if (!record || record.assets.length === 0) return;
 
-  const assets: GeneratedAsset[] = record.assets.map((asset) => ({
-    edition: asset.edition,
-    dna: asset.dna,
-    imageBlob: asset.imageBlob,
-    previewUrl: URL.createObjectURL(asset.imageBlob),
-    metadata: asset.metadata,
-    traits: asset.traits,
-  }));
+    // Only create object URLs for the last few shown in the queue UI.
+    const previewFrom = Math.max(0, record.assets.length - 20);
+    const assets: GeneratedAsset[] = record.assets.map((asset, index) => {
+      if (index < previewFrom) return asset;
+      return {
+        ...asset,
+        previewUrl: URL.createObjectURL(asset.imageBlob),
+      };
+    });
 
-  useGeneratorStore.setState({
-    generatedAssets: assets,
-    generatedCanvasSize: record.canvasSize,
-    traitDistribution: buildTraitDistribution(assets),
-    generationProgress: assets.length,
-    generationTotal: assets.length,
-  });
+    useGeneratorStore.setState({
+      generatedAssets: assets,
+      generatedCanvasSize: record.canvasSize,
+      traitDistribution: buildTraitDistribution(assets),
+      generationProgress: assets.length,
+      generationTotal: assets.length,
+    });
+  } catch {
+    // Corrupted / oversized saved generation — don't block the app.
+    try {
+      await deleteGeneratedRecord(projectId);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export async function bootstrapProjectPersistence(): Promise<void> {

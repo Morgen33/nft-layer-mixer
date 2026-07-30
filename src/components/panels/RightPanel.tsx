@@ -261,11 +261,17 @@ export function RightPanel() {
                   key={asset.edition}
                   className="flex min-w-0 items-center gap-2 text-xs text-zinc-400"
                 >
-                  <img
-                    src={asset.previewUrl}
-                    alt=""
-                    className="h-6 w-6 rounded object-cover"
-                  />
+                  {asset.previewUrl ? (
+                    <img
+                      src={asset.previewUrl}
+                      alt=""
+                      className="h-6 w-6 rounded object-cover"
+                    />
+                  ) : (
+                    <span className="flex h-6 w-6 items-center justify-center rounded bg-zinc-800 text-[9px] text-zinc-500">
+                      #
+                    </span>
+                  )}
                   <span className="text-zinc-300">#{asset.edition}</span>
                   <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-violet-400">
                     {asset.dna}
