@@ -6,6 +6,7 @@ import {
   deleteProjectRecord,
   listProjectRecords,
   loadGeneratedRecord,
+  loadGeneratedMetaOnly,
   loadProjectRecord,
   loadTraitImageUrl,
   persistGeneratedAssets,
@@ -73,6 +74,7 @@ function snapshotFromState(): PersistedProjectData {
 
 async function layersFromSnapshot(data: PersistedProjectData): Promise<Layer[]> {
   const layers: Layer[] = [];
+  let loaded = 0;
 
   for (const layer of [...data.layers].sort((a, b) => a.order - b.order)) {
     const traits = [];
@@ -83,6 +85,10 @@ async function layersFromSnapshot(data: PersistedProjectData): Promise<Layer[]> 
         ...trait,
         imageUrl,
       });
+      loaded += 1;
+      if (loaded % 8 === 0) {
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      }
     }
     layers.push({
       ...layer,
@@ -118,11 +124,19 @@ async function applyProjectRecord(record: ProjectRecord) {
     throw new Error("Saved project is missing trait images.");
   }
 
+  const MAX_LOADED_EXCLUSIONS = 200;
+  let exclusions = record.data.exclusions ?? [];
+  let exclusionWarning: string | null = null;
+  if (exclusions.length > MAX_LOADED_EXCLUSIONS) {
+    exclusionWarning = `Your project had ${exclusions.length.toLocaleString()} ban rules, which freezes the browser. Kept the first ${MAX_LOADED_EXCLUSIONS} — clear Rules and re-add only the ones you need.`;
+    exclusions = exclusions.slice(0, MAX_LOADED_EXCLUSIONS);
+  }
+
   clearEphemeralState();
   useGeneratorStore.setState({
     layers,
     dependencies: record.data.dependencies,
-    exclusions: record.data.exclusions,
+    exclusions,
     metadataConfig: record.data.metadataConfig,
     canvasSize: record.data.canvasSize,
     editionSize: record.data.editionSize,
@@ -130,11 +144,16 @@ async function applyProjectRecord(record: ProjectRecord) {
     activeProjectId: record.id,
     activeProjectName: record.name,
     lastSavedAt: record.updatedAt,
-    persistenceError: null,
+    persistenceError: exclusionWarning,
+    generationError: exclusionWarning,
   });
   lastSavedLayerFingerprint = layerFingerprint(layers);
 
-  await restoreGeneratedAssets(record.id);
+  // Never block first paint by loading hundreds of generated PNGs.
+  // Schedule a lightweight check; skip restore for large runs.
+  window.setTimeout(() => {
+    void restoreGeneratedAssetsSafe(record.id);
+  }, 0);
 }
 
 export async function saveCurrentProject(
@@ -260,6 +279,30 @@ export function startAutosaveListener() {
   });
 }
 
+async function restoreGeneratedAssetsSafe(projectId: string): Promise<void> {
+  try {
+    const meta = await loadGeneratedMetaOnly(projectId);
+    if (!meta) return;
+
+    if (meta.assetCount > 80) {
+      await deleteGeneratedRecord(projectId);
+      useGeneratorStore.setState({
+        persistenceError:
+          "Skipped restoring a large generated collection so the page stays responsive. Generate again and Export ZIP to keep it.",
+      });
+      return;
+    }
+
+    await restoreGeneratedAssets(projectId);
+  } catch {
+    try {
+      await deleteGeneratedRecord(projectId);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function restoreGeneratedAssets(projectId: string): Promise<void> {
   try {
     const record = await loadGeneratedRecord(projectId);
@@ -283,7 +326,6 @@ async function restoreGeneratedAssets(projectId: string): Promise<void> {
       generationTotal: assets.length,
     });
   } catch {
-    // Corrupted / oversized saved generation — don't block the app.
     try {
       await deleteGeneratedRecord(projectId);
     } catch {

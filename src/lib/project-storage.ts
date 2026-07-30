@@ -12,7 +12,7 @@ import type {
 
 export const AUTOSAVE_PROJECT_ID = "__autosave__";
 /** Above this, skip auto-saving generated images to keep the UI responsive. */
-export const MAX_PERSISTED_GENERATED = 400;
+export const MAX_PERSISTED_GENERATED = 80;
 
 const DB_NAME = "nft-layer-mixer";
 const DB_VERSION = 3;
@@ -313,6 +313,23 @@ export async function persistGeneratedAssets(
   db.close();
 
   return { saved: true };
+}
+
+export async function loadGeneratedMetaOnly(
+  id: string,
+): Promise<{ canvasSize: number; assetCount: number } | null> {
+  const db = await openDb();
+  const tx = db.transaction(GENERATED_STORE, "readonly");
+  const record = await new Promise<GeneratedRecord | undefined>((resolve, reject) => {
+    const request = tx.objectStore(GENERATED_STORE).get(id);
+    request.onsuccess = () =>
+      resolve(request.result as GeneratedRecord | undefined);
+    request.onerror = () => reject(request.error);
+  });
+  await txDone(tx);
+  db.close();
+  if (!record?.assets?.length) return null;
+  return { canvasSize: record.canvasSize, assetCount: record.assets.length };
 }
 
 export async function loadGeneratedRecord(
