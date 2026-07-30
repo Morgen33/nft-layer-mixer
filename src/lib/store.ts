@@ -621,6 +621,11 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
     set({ isRollingDice: true, generationError: null });
 
     try {
+      // Let "Rolling…" paint before the (possibly heavy) rules search.
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, 0);
+      });
+
       const rolled = rollCombination(
         layers,
         dependencies,
@@ -631,7 +636,9 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
         set({
           isRollingDice: false,
           generationError:
-            "No valid combinations left with your current rules. Remove a few bans or add more traits.",
+            exclusions.length > 0
+              ? `No valid combo found with ${exclusions.length.toLocaleString()} ban rules. Clear some bans (Rules → Clear All) or loosen them, then try again.`
+              : "No valid combinations left. Add more traits and try again.",
         });
         return;
       }

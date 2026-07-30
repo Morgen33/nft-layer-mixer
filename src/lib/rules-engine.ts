@@ -6,7 +6,9 @@ import type {
 } from "./types";
 import { pickWeightedTrait } from "./weighted-random";
 
-const MAX_RANDOM_ROLL_ATTEMPTS = 10_000;
+const MAX_RANDOM_ROLL_ATTEMPTS = 200;
+const MAX_DFS_NODES = 25_000;
+const MAX_ROLL_MS = 400;
 
 function buildDna(layers: Layer[], selection: Map<string, string>): string {
   return layers
@@ -16,6 +18,28 @@ function buildDna(layers: Layer[], selection: Map<string, string>): string {
       return String(idx >= 0 ? idx : 0);
     })
     .join("-");
+}
+
+function pairKey(
+  layerAId: string,
+  traitAId: string,
+  layerBId: string,
+  traitBId: string,
+): string {
+  const a = `${layerAId}:${traitAId}`;
+  const b = `${layerBId}:${traitBId}`;
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** O(1) exclusion lookups — scanning hundreds of rules per trait freezes the UI. */
+export function buildExclusionIndex(exclusions: ExclusionRule[]): Set<string> {
+  const index = new Set<string>();
+  for (const rule of exclusions) {
+    index.add(
+      pairKey(rule.layerAId, rule.traitAId, rule.layerBId, rule.traitBId),
+    );
+  }
+  return index;
 }
 
 function orderedCandidates(candidates: Trait[], randomize: boolean): Trait[] {
@@ -32,54 +56,6 @@ function orderedCandidates(candidates: Trait[], randomize: boolean): Trait[] {
     );
   }
   return ordered;
-}
-
-/**
- * Backtracking search finds a valid trait combo under heavy ban/dependency rules.
- * Random retries fail when many exclusions leave only a tiny valid set.
- */
-export function findValidCombination(
-  layers: Layer[],
-  dependencies: DependencyRule[],
-  exclusions: ExclusionRule[],
-  existingDna: Set<string>,
-  randomize = true,
-): { selection: Map<string, string>; dna: string } | null {
-  const selection = new Map<string, string>();
-  let found: { selection: Map<string, string>; dna: string } | null = null;
-
-  function dfs(layerIndex: number): boolean {
-    if (found) return true;
-
-    if (layerIndex >= layers.length) {
-      const dna = buildDna(layers, selection);
-      if (existingDna.has(dna)) return false;
-      found = { selection: new Map(selection), dna };
-      return true;
-    }
-
-    const layer = layers[layerIndex];
-    if (layer.traits.length === 0) return false;
-
-    const forced = getForcedTrait(layer, selection, dependencies);
-    const candidates = orderedCandidates(
-      forced
-        ? filterCompatibleTraits(layer, [forced], selection, exclusions)
-        : filterCompatibleTraits(layer, layer.traits, selection, exclusions),
-      randomize,
-    );
-
-    for (const trait of candidates) {
-      selection.set(layer.id, trait.id);
-      if (dfs(layerIndex + 1)) return true;
-      selection.delete(layer.id);
-    }
-
-    return false;
-  }
-
-  dfs(0);
-  return found;
 }
 
 export function getForcedTrait(
@@ -102,18 +78,16 @@ export function isExcluded(
   layerAId: string,
   traitBId: string,
   layerBId: string,
-  exclusions: ExclusionRule[],
+  exclusions: ExclusionRule[] | Set<string>,
 ): boolean {
+  const key = pairKey(layerAId, traitAId, layerBId, traitBId);
+  if (exclusions instanceof Set) {
+    return exclusions.has(key);
+  }
   return exclusions.some(
     (rule) =>
-      (rule.layerAId === layerAId &&
-        rule.traitAId === traitAId &&
-        rule.layerBId === layerBId &&
-        rule.traitBId === traitBId) ||
-      (rule.layerAId === layerBId &&
-        rule.traitAId === traitBId &&
-        rule.layerBId === layerAId &&
-        rule.traitBId === traitAId),
+      pairKey(rule.layerAId, rule.traitAId, rule.layerBId, rule.traitBId) ===
+      key,
   );
 }
 
@@ -121,18 +95,80 @@ export function filterCompatibleTraits(
   layer: Layer,
   candidateTraits: Trait[],
   selection: Map<string, string>,
-  exclusions: ExclusionRule[],
+  exclusions: ExclusionRule[] | Set<string>,
 ): Trait[] {
+  const index =
+    exclusions instanceof Set ? exclusions : buildExclusionIndex(exclusions);
+
+  if (index.size === 0 || selection.size === 0) {
+    return candidateTraits;
+  }
+
   return candidateTraits.filter((trait) => {
     for (const [otherLayerId, otherTraitId] of selection) {
-      if (
-        isExcluded(trait.id, layer.id, otherTraitId, otherLayerId, exclusions)
-      ) {
+      if (index.has(pairKey(layer.id, trait.id, otherLayerId, otherTraitId))) {
         return false;
       }
     }
     return true;
   });
+}
+
+/**
+ * Backtracking search with a hard node/time budget so heavy ban sets
+ * cannot freeze the browser tab.
+ */
+export function findValidCombination(
+  layers: Layer[],
+  dependencies: DependencyRule[],
+  exclusions: ExclusionRule[] | Set<string>,
+  existingDna: Set<string>,
+  randomize = true,
+): { selection: Map<string, string>; dna: string } | null {
+  const selection = new Map<string, string>();
+  let found: { selection: Map<string, string>; dna: string } | null = null;
+  let nodes = 0;
+  const started = performance.now();
+  const index =
+    exclusions instanceof Set ? exclusions : buildExclusionIndex(exclusions);
+
+  function dfs(layerIndex: number): boolean {
+    if (found) return true;
+    nodes += 1;
+    if (nodes > MAX_DFS_NODES) return false;
+    if (performance.now() - started > MAX_ROLL_MS) return false;
+
+    if (layerIndex >= layers.length) {
+      const dna = buildDna(layers, selection);
+      if (existingDna.has(dna)) return false;
+      found = { selection: new Map(selection), dna };
+      return true;
+    }
+
+    const layer = layers[layerIndex]!;
+    if (layer.traits.length === 0) return false;
+
+    const forced = getForcedTrait(layer, selection, dependencies);
+    const candidates = orderedCandidates(
+      forced
+        ? filterCompatibleTraits(layer, [forced], selection, index)
+        : filterCompatibleTraits(layer, layer.traits, selection, index),
+      randomize,
+    );
+
+    for (const trait of candidates) {
+      selection.set(layer.id, trait.id);
+      if (dfs(layerIndex + 1)) return true;
+      selection.delete(layer.id);
+      if (nodes > MAX_DFS_NODES) return false;
+      if (performance.now() - started > MAX_ROLL_MS) return false;
+    }
+
+    return false;
+  }
+
+  dfs(0);
+  return found;
 }
 
 export function rollCombination(
@@ -141,20 +177,24 @@ export function rollCombination(
   exclusions: ExclusionRule[],
   existingDna: Set<string>,
 ): { selection: Map<string, string>; dna: string } | null {
+  const index = buildExclusionIndex(exclusions);
+
   const found = findValidCombination(
     layers,
     dependencies,
-    exclusions,
+    index,
     existingDna,
     true,
   );
   if (found) return found;
 
-  // Fallback for edge cases where every DFS path hits a used DNA first.
+  const started = performance.now();
   for (let attempt = 0; attempt < MAX_RANDOM_ROLL_ATTEMPTS; attempt++) {
-    const selection = new Map<string, string>();
+    if (performance.now() - started > MAX_ROLL_MS) break;
 
+    const selection = new Map<string, string>();
     let valid = true;
+
     for (const layer of layers) {
       if (layer.traits.length === 0) {
         valid = false;
@@ -167,7 +207,7 @@ export function rollCombination(
           layer,
           [forced],
           selection,
-          exclusions,
+          index,
         );
         if (compatible.length === 0) {
           valid = false;
@@ -181,7 +221,7 @@ export function rollCombination(
         layer,
         layer.traits,
         selection,
-        exclusions,
+        index,
       );
       if (available.length === 0) {
         valid = false;
@@ -195,7 +235,6 @@ export function rollCombination(
     if (!valid) continue;
 
     const dna = buildDna(layers, selection);
-
     if (!existingDna.has(dna)) {
       return { selection, dna };
     }
@@ -205,9 +244,7 @@ export function rollCombination(
 }
 
 export function exclusionRuleKey(rule: Omit<ExclusionRule, "id">): string {
-  const a = `${rule.layerAId}:${rule.traitAId}`;
-  const b = `${rule.layerBId}:${rule.traitBId}`;
-  return a < b ? `${a}|${b}` : `${b}|${a}`;
+  return pairKey(rule.layerAId, rule.traitAId, rule.layerBId, rule.traitBId);
 }
 
 export function isDuplicateExclusion(
@@ -231,6 +268,12 @@ export function analyzeExclusions(
     return warnings;
   }
 
+  if (exclusions.length > 200) {
+    warnings.push(
+      `${exclusions.length.toLocaleString()} ban rules active — that's a lot. Rolls may fail or feel slow. Clear some bans if generation struggles.`,
+    );
+  }
+
   const seen = new Set<string>();
   for (const rule of exclusions) {
     const key = exclusionRuleKey(rule);
@@ -250,31 +293,29 @@ export function analyzeExclusions(
     }
   }
 
+  // Cheap per-trait full-layer wipe check (uses index).
+  const index = buildExclusionIndex(exclusions);
   for (const layer of layers) {
     if (layer.traits.length === 0) continue;
 
     for (const trait of layer.traits) {
-      const blockedByLayer = new Map<string, Set<string>>();
-
-      for (const rule of exclusions) {
-        if (rule.layerAId === layer.id && rule.traitAId === trait.id) {
-          const set =
-            blockedByLayer.get(rule.layerBId) ?? new Set<string>();
-          set.add(rule.traitBId);
-          blockedByLayer.set(rule.layerBId, set);
-        } else if (rule.layerBId === layer.id && rule.traitBId === trait.id) {
-          const set =
-            blockedByLayer.get(rule.layerAId) ?? new Set<string>();
-          set.add(rule.traitAId);
-          blockedByLayer.set(rule.layerAId, set);
+      for (const otherLayer of layers) {
+        if (otherLayer.id === layer.id || otherLayer.traits.length === 0) {
+          continue;
         }
-      }
 
-      for (const [otherLayerId, blockedTraitIds] of blockedByLayer) {
-        const otherLayer = layers.find((l) => l.id === otherLayerId);
-        if (!otherLayer) continue;
+        let blocked = 0;
+        for (const other of otherLayer.traits) {
+          if (
+            index.has(
+              pairKey(layer.id, trait.id, otherLayer.id, other.id),
+            )
+          ) {
+            blocked += 1;
+          }
+        }
 
-        if (blockedTraitIds.size >= otherLayer.traits.length) {
+        if (blocked >= otherLayer.traits.length) {
           warnings.push(
             `“${trait.name}” (${layer.name}) bans every trait in “${otherLayer.name}” — rolls using that trait may fail.`,
           );
@@ -285,23 +326,20 @@ export function analyzeExclusions(
 
   if (dependencies.length > 0) {
     for (const dep of dependencies) {
-      for (const rule of exclusions) {
-        const forcesPair =
-          (rule.layerAId === dep.sourceLayerId &&
-            rule.traitAId === dep.sourceTraitId &&
-            rule.layerBId === dep.targetLayerId &&
-            rule.traitBId === dep.targetTraitId) ||
-          (rule.layerBId === dep.sourceLayerId &&
-            rule.traitBId === dep.sourceTraitId &&
-            rule.layerAId === dep.targetLayerId &&
-            rule.traitAId === dep.targetTraitId);
-
-        if (forcesPair) {
-          warnings.push(
-            "A dependency rule conflicts with a ban — the forced pair can never appear.",
-          );
-          break;
-        }
+      if (
+        index.has(
+          pairKey(
+            dep.sourceLayerId,
+            dep.sourceTraitId,
+            dep.targetLayerId,
+            dep.targetTraitId,
+          ),
+        )
+      ) {
+        warnings.push(
+          "A dependency rule conflicts with a ban — the forced pair can never appear.",
+        );
+        break;
       }
     }
   }
@@ -331,12 +369,6 @@ export function validateRulesConfig(
   for (const rule of exclusions) {
     if (!layerIds.has(rule.layerAId) || !layerIds.has(rule.layerBId)) {
       return "Exclusion rule references a missing layer.";
-    }
-  }
-
-  for (const layer of layers) {
-    if (layer.traits.length === 0) {
-      return `Layer "${layer.name}" has no traits.`;
     }
   }
 

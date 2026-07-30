@@ -1,9 +1,14 @@
 import type { DependencyRule, ExclusionRule, Layer } from "./types";
-import { filterCompatibleTraits, getForcedTrait } from "./rules-engine";
+import {
+  buildExclusionIndex,
+  filterCompatibleTraits,
+  getForcedTrait,
+} from "./rules-engine";
 import { maxCombinations } from "./rarity";
 
 /** Stop full enumeration above this to keep the UI responsive. */
-export const ENUMERATION_CAP = 250_000;
+export const ENUMERATION_CAP = 50_000;
+const MAX_COUNT_NODES = 100_000;
 
 export type ComboSelection = {
   dna: string;
@@ -36,7 +41,7 @@ export function comboWeight(
 function enumerateDfs(
   layers: Layer[],
   dependencies: DependencyRule[],
-  exclusions: ExclusionRule[],
+  exclusionIndex: Set<string>,
   layerIndex: number,
   selection: Map<string, string>,
   out: ComboSelection[],
@@ -52,18 +57,18 @@ function enumerateDfs(
     return;
   }
 
-  const layer = layers[layerIndex];
+  const layer = layers[layerIndex]!;
   const forced = getForcedTrait(layer, selection, dependencies);
   const candidates = forced
-    ? filterCompatibleTraits(layer, [forced], selection, exclusions)
-    : filterCompatibleTraits(layer, layer.traits, selection, exclusions);
+    ? filterCompatibleTraits(layer, [forced], selection, exclusionIndex)
+    : filterCompatibleTraits(layer, layer.traits, selection, exclusionIndex);
 
   for (const trait of candidates) {
     selection.set(layer.id, trait.id);
     enumerateDfs(
       layers,
       dependencies,
-      exclusions,
+      exclusionIndex,
       layerIndex + 1,
       selection,
       out,
@@ -84,7 +89,8 @@ export function enumerateValidCombinations(
     return [];
   }
   const out: ComboSelection[] = [];
-  enumerateDfs(layers, dependencies, exclusions, 0, new Map(), out, limit);
+  const index = buildExclusionIndex(exclusions);
+  enumerateDfs(layers, dependencies, index, 0, new Map(), out, limit);
   return out;
 }
 
@@ -108,22 +114,29 @@ export function countValidCombinations(
     return { count: theoretical, exact: false };
   }
 
+  const index = buildExclusionIndex(exclusions);
   let count = 0;
   let exact = true;
+  let nodes = 0;
 
   function dfs(layerIndex: number, selection: Map<string, string>) {
     if (!exact) return;
+    nodes += 1;
+    if (nodes > MAX_COUNT_NODES) {
+      exact = false;
+      return;
+    }
     if (layerIndex >= layers.length) {
       count++;
       if (count > ENUMERATION_CAP) exact = false;
       return;
     }
 
-    const layer = layers[layerIndex];
+    const layer = layers[layerIndex]!;
     const forced = getForcedTrait(layer, selection, dependencies);
     const candidates = forced
-      ? filterCompatibleTraits(layer, [forced], selection, exclusions)
-      : filterCompatibleTraits(layer, layer.traits, selection, exclusions);
+      ? filterCompatibleTraits(layer, [forced], selection, index)
+      : filterCompatibleTraits(layer, layer.traits, selection, index);
 
     for (const trait of candidates) {
       selection.set(layer.id, trait.id);
