@@ -24,6 +24,10 @@ export type GenerateOptions = {
   count: number;
   canvasSize: number;
   metadataConfig: MetadataConfig;
+  /** 1-based first edition number for this batch (default 1). */
+  startEdition?: number;
+  /** DNA already used by prior batches — must not be reused. */
+  existingDna?: Set<string> | string[];
   onProgress?: (current: number, total: number, asset?: GeneratedAsset) => void;
   signal?: AbortSignal;
   batchSize?: number;
@@ -95,7 +99,7 @@ async function compositeJobs(
 ): Promise<GeneratedAsset[]> {
   return Promise.all(
     jobs.map(async (job, offset) => {
-      const edition = startEdition + offset + 1;
+      const edition = startEdition + offset;
       const traitInfo = buildTraitInfo(layers, job.selection);
       const orderedTraits = layers.map((layer) => {
         const traitId = job.selection.get(layer.id)!;
@@ -131,21 +135,30 @@ export async function generateCollection(
     count,
     canvasSize,
     metadataConfig,
+    startEdition = 1,
+    existingDna,
     onProgress,
     signal,
     batchSize: explicitBatchSize,
   } = opts;
 
   const batchSize = resolveBatchSize(count, canvasSize, explicitBatchSize);
+  const dnaSet = new Set(
+    existingDna instanceof Set ? existingDna : (existingDna ?? []),
+  );
   const { count: validCount, exact: validExact } = countValidCombinations(
     layers,
     dependencies,
     exclusions,
   );
 
-  if (validExact && count > validCount) {
+  const remainingCapacity = validExact
+    ? Math.max(0, validCount - dnaSet.size)
+    : Number.POSITIVE_INFINITY;
+
+  if (validExact && count > remainingCapacity) {
     throw new Error(
-      `Requested ${count.toLocaleString()} NFTs exceeds maximum unique combinations (${validCount.toLocaleString()}). Add more traits or remove exclusion rules.`,
+      `Requested ${count.toLocaleString()} NFTs but only ${remainingCapacity.toLocaleString()} unique combinations remain after prior batches (${validCount.toLocaleString()} total).`,
     );
   }
 
@@ -155,7 +168,7 @@ export async function generateCollection(
     validExact &&
     validCount <= POOL_ENUM_LIMIT &&
     validCount > 0 &&
-    count <= validCount;
+    dnaSet.size + count <= validCount;
 
   if (usePool) {
     const pool = enumerateValidCombinations(
@@ -163,7 +176,14 @@ export async function generateCollection(
       dependencies,
       exclusions,
       validCount,
-    );
+    ).filter((entry) => !dnaSet.has(entry.dna));
+
+    if (pool.length < count) {
+      throw new Error(
+        `Only ${pool.length.toLocaleString()} unused combinations remain for this batch.`,
+      );
+    }
+
     const selected =
       count === pool.length
         ? pool
@@ -174,12 +194,13 @@ export async function generateCollection(
       const batch = selected.slice(i, i + batchSize);
       const batchResults = await compositeJobs(
         batch,
-        i,
+        startEdition + i,
         layers,
         canvasSize,
         metadataConfig,
       );
       for (const asset of batchResults) {
+        dnaSet.add(asset.dna);
         results.push(asset);
         onProgress?.(results.length, count, asset);
       }
@@ -188,8 +209,6 @@ export async function generateCollection(
 
     return results;
   }
-
-  const dnaSet = new Set<string>();
 
   while (results.length < count) {
     if (signal?.aborted) throw new Error("Generation cancelled");
@@ -219,7 +238,7 @@ export async function generateCollection(
       }
       if (!rolled) {
         throw new Error(
-          `Could not generate unique DNA at edition ${i + 1}. Add more traits or loosen exclusion rules.`,
+          `Could not generate unique DNA at edition ${startEdition + i}. Add more traits or loosen exclusion rules.`,
         );
       }
       dnaSet.add(rolled.dna);
@@ -228,7 +247,7 @@ export async function generateCollection(
 
     const batchResults = await compositeJobs(
       batchJobs,
-      results.length,
+      startEdition + results.length,
       layers,
       canvasSize,
       metadataConfig,

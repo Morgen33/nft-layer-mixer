@@ -15,11 +15,12 @@ export const AUTOSAVE_PROJECT_ID = "__autosave__";
 export const MAX_PERSISTED_GENERATED = 80;
 
 const DB_NAME = "nft-layer-mixer";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const PROJECTS_STORE = "projects";
 const IMAGES_STORE = "images";
 const GENERATED_STORE = "generated";
 const GENERATED_IMAGES_STORE = "generated-images";
+const COLLECTION_RUNS_STORE = "collection-runs";
 
 export interface PersistedGeneratedMeta {
   edition: number;
@@ -92,6 +93,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(GENERATED_IMAGES_STORE)) {
         db.createObjectStore(GENERATED_IMAGES_STORE);
+      }
+      if (!db.objectStoreNames.contains(COLLECTION_RUNS_STORE)) {
+        db.createObjectStore(COLLECTION_RUNS_STORE, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
