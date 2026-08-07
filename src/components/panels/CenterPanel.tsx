@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Dices,
   Dna,
@@ -124,6 +124,19 @@ export function CenterPanel() {
   const startCollectionRun = useGeneratorStore((s) => s.startCollectionRun);
   const startNextBatch = useGeneratorStore((s) => s.startNextBatch);
   const clearCollectionRun = useGeneratorStore((s) => s.clearCollectionRun);
+
+  const [targetDraft, setTargetDraft] = useState(String(collectionRunTarget));
+  const [batchSizeDraft, setBatchSizeDraft] = useState(
+    String(collectionRunBatchSize),
+  );
+
+  useEffect(() => {
+    setTargetDraft(String(collectionRunTarget));
+  }, [collectionRunTarget]);
+
+  useEffect(() => {
+    setBatchSizeDraft(String(collectionRunBatchSize));
+  }, [collectionRunBatchSize]);
 
   const maxCombos = useMemo(
     () => getMaxCombinations(),
@@ -321,13 +334,20 @@ export function CenterPanel() {
                   Total target
                 </span>
                 <input
-                  type="number"
-                  min={1}
-                  value={collectionRunTarget}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={targetDraft}
                   disabled={isGenerating}
-                  onChange={(e) =>
-                    setCollectionRunTarget(Number(e.target.value) || 1)
-                  }
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => {
+                    setTargetDraft(e.target.value.replace(/\D/g, ""));
+                  }}
+                  onBlur={() => {
+                    const next = Math.max(1, parseInt(targetDraft, 10) || 1);
+                    setCollectionRunTarget(next);
+                    setTargetDraft(String(next));
+                  }}
                   className="w-full rounded-lg border border-zinc-700 bg-[#0d0d12] px-2 py-1.5 text-xs text-zinc-200"
                 />
               </label>
@@ -336,15 +356,23 @@ export function CenterPanel() {
                   Batch size
                 </span>
                 <input
-                  type="number"
-                  min={1}
-                  value={collectionRunBatchSize}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={batchSizeDraft}
                   disabled={isGenerating}
-                  onChange={(e) =>
-                    setCollectionRunBatchSize(
-                      Number(e.target.value) || DEFAULT_BATCH_SIZE,
-                    )
-                  }
+                  onFocus={(e) => e.target.select()}
+                  onChange={(e) => {
+                    setBatchSizeDraft(e.target.value.replace(/\D/g, ""));
+                  }}
+                  onBlur={() => {
+                    const next = Math.max(
+                      1,
+                      parseInt(batchSizeDraft, 10) || DEFAULT_BATCH_SIZE,
+                    );
+                    setCollectionRunBatchSize(next);
+                    setBatchSizeDraft(String(next));
+                  }}
                   className="w-full rounded-lg border border-zinc-700 bg-[#0d0d12] px-2 py-1.5 text-xs text-zinc-200"
                 />
               </label>
