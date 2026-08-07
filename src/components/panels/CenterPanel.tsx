@@ -303,7 +303,15 @@ export function CenterPanel() {
               variant="primary"
               onClick={startGeneration}
               className="flex-1"
-              disabled={blocked}
+              disabled={
+                blocked ||
+                Boolean(collectionRun && !isCollectionRunComplete(collectionRun))
+              }
+              title={
+                collectionRun && !isCollectionRunComplete(collectionRun)
+                  ? "Use Generate Next in Batch Collection Run to continue edition numbers"
+                  : undefined
+              }
             >
               <Play size={14} /> Generate {editionSize.toLocaleString()} NFTs
             </GlowButton>
@@ -313,6 +321,15 @@ export function CenterPanel() {
             </GlowButton>
           )}
         </div>
+
+        {collectionRun && !runComplete && (
+          <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            Collection run active — next batch starts at{" "}
+            <strong>#{collectionRun.nextEdition.toLocaleString()}</strong>. Use{" "}
+            <strong>Generate Next</strong> below (not the button above) so files
+            continue as {(collectionRun.nextEdition - 1).toLocaleString()}.png…
+          </div>
+        )}
 
         <div className="mb-4 space-y-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
           <div className="flex items-center gap-2 text-xs font-semibold text-violet-200">

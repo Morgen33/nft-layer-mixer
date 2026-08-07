@@ -13,14 +13,26 @@ export async function exportCollectionZip(
   const zip = new JSZip();
   const images = zip.folder("images");
   const metadataFolder = zip.folder("metadata");
-
-  const allMetadata: NftMetadata[] = assets.map((a) => a.metadata);
+  const allMetadata: NftMetadata[] = [];
 
   for (const asset of assets) {
-    const index = asset.edition - 1;
+    const fileIndex = asset.edition - 1;
+    // Keep metadata image paths aligned with on-disk 0-based filenames.
+    const metadata: NftMetadata = {
+      ...asset.metadata,
+      edition: asset.edition,
+      image: `${fileIndex}.png`,
+      name: asset.metadata.name.includes("#")
+        ? asset.metadata.name
+        : `${config.namePrefix} #${asset.edition}`,
+    };
     // PNGs are already compressed; storing them avoids slow, pointless re-compression.
-    images?.file(`${index}.png`, asset.imageBlob, { compression: "STORE" });
-    metadataFolder?.file(`${index}.json`, JSON.stringify(asset.metadata, null, 2));
+    images?.file(`${fileIndex}.png`, asset.imageBlob, { compression: "STORE" });
+    metadataFolder?.file(
+      `${fileIndex}.json`,
+      JSON.stringify(metadata, null, 2),
+    );
+    allMetadata.push(metadata);
   }
 
   zip.file(

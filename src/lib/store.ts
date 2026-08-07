@@ -738,6 +738,17 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
       state.exclusions,
     );
 
+    if (
+      state.collectionRun &&
+      !isCollectionRunComplete(state.collectionRun)
+    ) {
+      set({
+        generationError:
+          `A collection run is active (next edition #${state.collectionRun.nextEdition}). Use “Generate Next” in Batch Collection Run — the regular Generate button restarts at #1 and will break numbering.`,
+      });
+      return;
+    }
+
     if (state.layers.length === 0) {
       set({ generationError: "Add at least one layer with traits." });
       return;
@@ -970,10 +981,21 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
       return;
     }
 
+    const fromEdition = run.nextEdition;
+    if (
+      fromEdition < 1 ||
+      fromEdition !== run.completedCount + 1
+    ) {
+      set({
+        generationError:
+          `Collection run edition counter is inconsistent (next=#${fromEdition}, completed=${run.completedCount}). Re-import your progress file or reset the run.`,
+      });
+      return;
+    }
+
     revokeAssetUrls(state.generatedAssets);
     abortController = new AbortController();
     const startTime = performance.now();
-    const fromEdition = run.nextEdition;
     const toEdition = fromEdition + batchCount - 1;
 
     set({

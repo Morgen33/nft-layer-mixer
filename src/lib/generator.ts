@@ -60,10 +60,12 @@ function buildMetadata(
   traitInfo: SelectedTraitInfo[],
   config: MetadataConfig,
 ): NftMetadata {
+  // Files are 0-indexed across the whole collection (edition 1 → 0.png).
+  const fileIndex = edition - 1;
   return {
     name: `${config.namePrefix} #${edition}`,
     description: config.description,
-    image: `${edition}.png`,
+    image: `${fileIndex}.png`,
     dna,
     edition,
     attributes: traitInfo.map((t) => ({
