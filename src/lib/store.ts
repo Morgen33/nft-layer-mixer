@@ -35,6 +35,20 @@ import {
   traitPercentage,
   weightForTargetPercentage,
 } from "./rarity";
+import {
+  appendBatchToRun,
+  assertRunCompatible,
+  buildCollectionFingerprint,
+  createCollectionRun,
+  DEFAULT_BATCH_SIZE,
+  deleteCollectionRun,
+  downloadProgressManifest,
+  getNextBatchCount,
+  isCollectionRunComplete,
+  parseProgressManifest,
+  persistCollectionRun,
+  type CollectionRun,
+} from "./collection-run";
 import { exportCollectionZip, revokeAssetUrls } from "./zip-export";
 import type {
   DependencyRule,
@@ -80,6 +94,10 @@ interface GeneratorStore {
 
   isExporting: boolean;
   exportProgress: number;
+
+  collectionRun: CollectionRun | null;
+  collectionRunTarget: number;
+  collectionRunBatchSize: number;
 
   persistenceReady: boolean;
   activeProjectId: string | null;
@@ -132,6 +150,13 @@ interface GeneratorStore {
 
   rollDice: () => Promise<void>;
   startGeneration: () => Promise<void>;
+  startCollectionRun: (totalTarget?: number, batchSize?: number) => Promise<void>;
+  startNextBatch: () => Promise<void>;
+  importCollectionProgress: (raw: unknown) => Promise<void>;
+  clearCollectionRun: () => Promise<void>;
+  setCollectionRunTarget: (totalTarget: number) => void;
+  setCollectionRunBatchSize: (batchSize: number) => void;
+  downloadCollectionProgress: () => void;
   cancelGeneration: () => void;
   exportZip: () => Promise<void>;
   clearGeneration: () => void;
@@ -194,6 +219,9 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
   isRollingDice: false,
   isExporting: false,
   exportProgress: 0,
+  collectionRun: null,
+  collectionRunTarget: 7676,
+  collectionRunBatchSize: DEFAULT_BATCH_SIZE,
   persistenceReady: false,
   activeProjectId: null,
   activeProjectName: "My Collection",
@@ -832,14 +860,286 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
     }
   },
 
+  setCollectionRunTarget: (totalTarget) => {
+    set({ collectionRunTarget: Math.max(1, Math.floor(totalTarget) || 1) });
+  },
+
+  setCollectionRunBatchSize: (batchSize) => {
+    set({
+      collectionRunBatchSize: Math.max(1, Math.floor(batchSize) || DEFAULT_BATCH_SIZE),
+    });
+  },
+
+  startCollectionRun: async (totalTarget, batchSize) => {
+    const state = get();
+    const target = Math.max(
+      1,
+      Math.floor(totalTarget ?? state.collectionRunTarget) || 1,
+    );
+    const size = Math.max(
+      1,
+      Math.floor(batchSize ?? state.collectionRunBatchSize) || DEFAULT_BATCH_SIZE,
+    );
+
+    if (state.layers.length === 0 || state.layers.some((l) => l.traits.length === 0)) {
+      set({
+        generationError:
+          "Add layers with traits before starting a collection run.",
+      });
+      return;
+    }
+
+    if (state.collectionRun && !isCollectionRunComplete(state.collectionRun)) {
+      const proceed =
+        typeof window === "undefined"
+          ? true
+          : window.confirm(
+              "Replace the current unfinished collection run? DNA history from the old run will be cleared.",
+            );
+      if (!proceed) return;
+      await deleteCollectionRun(state.collectionRun.id);
+    }
+
+    const fingerprint = buildCollectionFingerprint(
+      state.layers,
+      state.dependencies,
+      state.exclusions,
+      state.canvasSize,
+    );
+
+    const run = createCollectionRun({
+      name: state.metadataConfig.namePrefix || "Collection Run",
+      projectId: state.activeProjectId || "local",
+      totalTarget: target,
+      batchSize: size,
+      canvasSize: state.canvasSize,
+      fingerprint,
+      metadataNamePrefix: state.metadataConfig.namePrefix,
+    });
+
+    await persistCollectionRun(run);
+    set({
+      collectionRun: run,
+      collectionRunTarget: target,
+      collectionRunBatchSize: size,
+      generationError: null,
+    });
+
+    await get().startNextBatch();
+  },
+
+  startNextBatch: async () => {
+    const state = get();
+    const run = state.collectionRun;
+
+    if (!run) {
+      set({
+        generationError:
+          "Start a collection run first (set total target, then Generate Next Batch).",
+      });
+      return;
+    }
+
+    if (isCollectionRunComplete(run)) {
+      set({
+        generationError:
+          "This collection run is already complete. Start a new run for another collection.",
+      });
+      return;
+    }
+
+    try {
+      assertRunCompatible(
+        run,
+        state.layers,
+        state.dependencies,
+        state.exclusions,
+        state.canvasSize,
+      );
+    } catch (error) {
+      set({
+        generationError:
+          error instanceof Error ? error.message : "Collection run is incompatible.",
+      });
+      return;
+    }
+
+    const batchCount = getNextBatchCount(run);
+    if (batchCount <= 0) {
+      set({ generationError: "No remaining NFTs in this collection run." });
+      return;
+    }
+
+    revokeAssetUrls(state.generatedAssets);
+    abortController = new AbortController();
+    const startTime = performance.now();
+    const fromEdition = run.nextEdition;
+    const toEdition = fromEdition + batchCount - 1;
+
+    set({
+      isGenerating: true,
+      generationProgress: 0,
+      generationTotal: batchCount,
+      generationSpeed: 0,
+      generationEta: 0,
+      recentPreviews: [],
+      generatedAssets: [],
+      traitDistribution: {},
+      generationError: null,
+      editionSize: batchCount,
+    });
+
+    try {
+      const assets = await generateCollection({
+        layers: state.layers,
+        dependencies: state.dependencies,
+        exclusions: state.exclusions,
+        count: batchCount,
+        canvasSize: state.canvasSize,
+        metadataConfig: state.metadataConfig,
+        startEdition: fromEdition,
+        existingDna: new Set(run.usedDna),
+        signal: abortController.signal,
+        onProgress: (current, total, asset) => {
+          const elapsed = performance.now() - startTime;
+          set((s) => {
+            let generatedAssets = s.generatedAssets;
+            let recentPreviews = s.recentPreviews;
+
+            if (asset) {
+              generatedAssets = [...generatedAssets, asset];
+              if (generatedAssets.length > 4) {
+                const staleIndex = generatedAssets.length - 5;
+                const stale = generatedAssets[staleIndex];
+                if (stale?.previewUrl) {
+                  URL.revokeObjectURL(stale.previewUrl);
+                  generatedAssets[staleIndex] = { ...stale, previewUrl: "" };
+                }
+              }
+              recentPreviews = [...recentPreviews, asset].slice(-4);
+            }
+
+            const updateDist =
+              current === total || current % 25 === 0 || current === 1;
+
+            return {
+              generationProgress: current,
+              generationTotal: total,
+              generationSpeed: computeGenerationSpeed(current, elapsed),
+              generationEta: computeEta(current, total, elapsed),
+              recentPreviews,
+              generatedAssets,
+              ...(updateDist
+                ? {
+                    traitDistribution: buildTraitDistribution(generatedAssets),
+                  }
+                : {}),
+            };
+          });
+        },
+      });
+
+      const finalized = assets.map((asset, index) => {
+        if (index >= assets.length - 4) return asset;
+        if (asset.previewUrl) URL.revokeObjectURL(asset.previewUrl);
+        return { ...asset, previewUrl: "" };
+      });
+
+      const updatedRun = appendBatchToRun(
+        run,
+        finalized.map((asset) => asset.dna),
+      );
+      await persistCollectionRun(updatedRun);
+
+      set({
+        generatedAssets: finalized,
+        generatedCanvasSize: state.canvasSize,
+        traitDistribution: buildTraitDistribution(finalized),
+        collectionRun: updatedRun,
+        isGenerating: false,
+        generationError: null,
+      });
+
+      // Auto-download portable progress after each successful batch.
+      downloadProgressManifest(updatedRun);
+    } catch (e) {
+      set({
+        isGenerating: false,
+        generationError:
+          e instanceof Error
+            ? e.message
+            : `Batch ${fromEdition}–${toEdition} failed.`,
+      });
+    } finally {
+      abortController = null;
+    }
+  },
+
+  importCollectionProgress: async (raw) => {
+    try {
+      const run = parseProgressManifest(raw);
+      const state = get();
+      assertRunCompatible(
+        run,
+        state.layers,
+        state.dependencies,
+        state.exclusions,
+        state.canvasSize,
+      );
+      await persistCollectionRun(run);
+      set({
+        collectionRun: run,
+        collectionRunTarget: run.totalTarget,
+        collectionRunBatchSize: run.batchSize,
+        generationError: null,
+        persistenceError: null,
+      });
+    } catch (error) {
+      set({
+        generationError:
+          error instanceof Error
+            ? error.message
+            : "Could not import collection progress.",
+      });
+      throw error;
+    }
+  },
+
+  clearCollectionRun: async () => {
+    const run = get().collectionRun;
+    if (run) {
+      await deleteCollectionRun(run.id);
+    }
+    set({
+      collectionRun: null,
+      generationError: null,
+    });
+  },
+
+  downloadCollectionProgress: () => {
+    const run = get().collectionRun;
+    if (!run) {
+      set({
+        generationError: "No active collection run to download.",
+      });
+      return;
+    }
+    downloadProgressManifest(run);
+  },
+
   cancelGeneration: () => {
     abortController?.abort();
     set({ isGenerating: false });
   },
 
   exportZip: async () => {
-    const { generatedAssets, metadataConfig, canvasSize, generatedCanvasSize } =
-      get();
+    const {
+      generatedAssets,
+      metadataConfig,
+      canvasSize,
+      generatedCanvasSize,
+      collectionRun,
+    } = get();
 
     if (generatedAssets.length === 0) {
       set({
@@ -866,9 +1166,18 @@ export const useGeneratorStore = create<GeneratorStore>((set, get) => ({
 
     set({ isExporting: true, exportProgress: 0, generationError: null });
     try {
-      await exportCollectionZip(generatedAssets, metadataConfig, slug, (pct) => {
-        set({ exportProgress: pct });
-      });
+      await exportCollectionZip(
+        generatedAssets,
+        metadataConfig,
+        slug,
+        (pct) => {
+          set({ exportProgress: pct });
+        },
+        collectionRun,
+      );
+      if (collectionRun) {
+        downloadProgressManifest(collectionRun);
+      }
       set({ isExporting: false, exportProgress: 100, generationError: null });
     } catch (error) {
       set({

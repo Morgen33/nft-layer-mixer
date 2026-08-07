@@ -5,14 +5,21 @@ import {
   Dices,
   Dna,
   Gauge,
+  Layers,
   Pause,
   Play,
+  RotateCcw,
   Sparkles,
   Timer,
   Zap,
 } from "lucide-react";
 import { GlowButton, Panel, StatPill, TierBadge } from "@/components/ui/primitives";
 import { formatPercentage } from "@/lib/rarity";
+import {
+  DEFAULT_BATCH_SIZE,
+  getNextBatchCount,
+  isCollectionRunComplete,
+} from "@/lib/collection-run";
 import { useGeneratorStore } from "@/lib/store";
 
 function DistributionChart({
@@ -48,7 +55,10 @@ function DistributionChart({
                 const delta = actualPct - expectedPct;
 
                 return (
-                  <div key={trait.name} className="grid grid-cols-[minmax(64px,96px)_1fr_auto] items-center gap-2 text-[10px] sm:grid-cols-[6rem_1fr_auto_auto]">
+                  <div
+                    key={trait.name}
+                    className="grid grid-cols-[minmax(64px,96px)_1fr_auto] items-center gap-2 text-[10px] sm:grid-cols-[6rem_1fr_auto_auto]"
+                  >
                     <span className="truncate text-zinc-400">{trait.name}</span>
                     <div className="flex-1 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
                       <div
@@ -104,6 +114,16 @@ export function CenterPanel() {
   const startGeneration = useGeneratorStore((s) => s.startGeneration);
   const cancelGeneration = useGeneratorStore((s) => s.cancelGeneration);
   const generationError = useGeneratorStore((s) => s.generationError);
+  const collectionRun = useGeneratorStore((s) => s.collectionRun);
+  const collectionRunTarget = useGeneratorStore((s) => s.collectionRunTarget);
+  const collectionRunBatchSize = useGeneratorStore((s) => s.collectionRunBatchSize);
+  const setCollectionRunTarget = useGeneratorStore((s) => s.setCollectionRunTarget);
+  const setCollectionRunBatchSize = useGeneratorStore(
+    (s) => s.setCollectionRunBatchSize,
+  );
+  const startCollectionRun = useGeneratorStore((s) => s.startCollectionRun);
+  const startNextBatch = useGeneratorStore((s) => s.startNextBatch);
+  const clearCollectionRun = useGeneratorStore((s) => s.clearCollectionRun);
 
   const maxCombos = useMemo(
     () => getMaxCombinations(),
@@ -124,6 +144,15 @@ export function CenterPanel() {
     generationTotal > 0
       ? Math.round((generationProgress / generationTotal) * 100)
       : 0;
+
+  const nextBatchCount = collectionRun ? getNextBatchCount(collectionRun) : 0;
+  const runComplete = collectionRun ? isCollectionRunComplete(collectionRun) : false;
+  const nextFrom = collectionRun?.nextEdition ?? 1;
+  const nextTo = collectionRun ? nextFrom + nextBatchCount - 1 : 0;
+  const batchBlocked =
+    Boolean(collectionRun) &&
+    nextBatchCount > 0 &&
+    collectionRun!.completedCount + nextBatchCount > maxCombos;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -149,7 +178,9 @@ export function CenterPanel() {
             {previewDna && (
               <div className="absolute bottom-2 left-2 right-2 flex items-center justify-center gap-1.5 rounded-lg bg-black/70 px-3 py-1.5 backdrop-blur-sm">
                 <Dna size={12} className="text-violet-400" />
-                <code className="truncate font-mono text-[10px] text-violet-300 sm:text-xs">{previewDna}</code>
+                <code className="truncate font-mono text-[10px] text-violet-300 sm:text-xs">
+                  {previewDna}
+                </code>
               </div>
             )}
           </div>
@@ -182,7 +213,9 @@ export function CenterPanel() {
                   >
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <span className="text-zinc-500">{t.layerName}:</span>
-                      <span className="min-w-0 truncate text-zinc-200">{t.traitName}</span>
+                      <span className="min-w-0 truncate text-zinc-200">
+                        {t.traitName}
+                      </span>
                       <TierBadge tier={t.tier} />
                     </div>
                     <span className="font-mono text-emerald-400 tabular-nums">
@@ -203,10 +236,20 @@ export function CenterPanel() {
       >
         <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
           <StatPill label="Max Combos" value={maxCombosLabel} accent="#a855f7" />
-          <StatPill label="Requested" value={editionSize.toLocaleString()} accent="#22c55e" />
+          <StatPill
+            label="Requested"
+            value={editionSize.toLocaleString()}
+            accent="#22c55e"
+          />
           <StatPill
             label="Status"
-            value={isGenerating ? "Running" : generatedAssets.length > 0 ? "Done" : "Ready"}
+            value={
+              isGenerating
+                ? "Running"
+                : generatedAssets.length > 0
+                  ? "Done"
+                  : "Ready"
+            }
             accent={isGenerating ? "#eab308" : "#84cc16"}
           />
         </div>
@@ -230,8 +273,8 @@ export function CenterPanel() {
 
         {!blocked && editionSize >= 10_000 && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            Large run ({editionSize.toLocaleString()} NFTs). Keep this tab open until export
-            finishes — it may take several minutes.
+            Large run ({editionSize.toLocaleString()} NFTs). Keep this tab open until
+            export finishes — it may take several minutes.
           </div>
         )}
 
@@ -258,15 +301,139 @@ export function CenterPanel() {
           )}
         </div>
 
+        <div className="mb-4 space-y-3 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-violet-200">
+            <Layers size={14} />
+            Batch Collection Run
+          </div>
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            Generate large collections in browser-safe batches (default{" "}
+            {DEFAULT_BATCH_SIZE.toLocaleString()}). DNA history is saved locally and
+            downloaded as{" "}
+            <code className="text-zinc-400">collection-progress.json</code> after each
+            batch — keep that file; browser storage can be cleared.
+          </p>
+
+          {!collectionRun ? (
+            <div className="grid grid-cols-2 gap-2">
+              <label className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+                  Total target
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  value={collectionRunTarget}
+                  disabled={isGenerating}
+                  onChange={(e) =>
+                    setCollectionRunTarget(Number(e.target.value) || 1)
+                  }
+                  className="w-full rounded-lg border border-zinc-700 bg-[#0d0d12] px-2 py-1.5 text-xs text-zinc-200"
+                />
+              </label>
+              <label className="space-y-1">
+                <span className="text-[10px] uppercase tracking-wider text-zinc-500">
+                  Batch size
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  value={collectionRunBatchSize}
+                  disabled={isGenerating}
+                  onChange={(e) =>
+                    setCollectionRunBatchSize(
+                      Number(e.target.value) || DEFAULT_BATCH_SIZE,
+                    )
+                  }
+                  className="w-full rounded-lg border border-zinc-700 bg-[#0d0d12] px-2 py-1.5 text-xs text-zinc-200"
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <StatPill
+                label="Completed"
+                value={`${collectionRun.completedCount.toLocaleString()} / ${collectionRun.totalTarget.toLocaleString()}`}
+                accent="#a855f7"
+              />
+              <StatPill
+                label="Batch"
+                value={`${collectionRun.batches.length + (runComplete ? 0 : 1)}`}
+                accent="#06b6d4"
+              />
+              <StatPill
+                label="Next range"
+                value={
+                  runComplete
+                    ? "Done"
+                    : `#${nextFrom.toLocaleString()}–#${nextTo.toLocaleString()}`
+                }
+                accent="#22c55e"
+              />
+            </div>
+          )}
+
+          {batchBlocked && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+              Next batch would exceed unique combinations ({maxCombosLabel}). Lower
+              the remaining target or loosen rules.
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            {!collectionRun ? (
+              <GlowButton
+                variant="primary"
+                className="flex-1"
+                disabled={isGenerating || layers.length === 0}
+                onClick={() => void startCollectionRun()}
+              >
+                <Play size={14} /> Start Run (
+                {collectionRunBatchSize.toLocaleString()} / batch)
+              </GlowButton>
+            ) : (
+              <>
+                <GlowButton
+                  variant="primary"
+                  className="flex-1"
+                  disabled={
+                    isGenerating ||
+                    runComplete ||
+                    nextBatchCount === 0 ||
+                    batchBlocked
+                  }
+                  onClick={() => void startNextBatch()}
+                >
+                  <Play size={14} /> Generate Next{" "}
+                  {nextBatchCount.toLocaleString()}
+                </GlowButton>
+                <GlowButton
+                  variant="ghost"
+                  disabled={isGenerating}
+                  onClick={() => {
+                    const ok = window.confirm(
+                      "Reset this collection run? DNA history will be cleared. Keep your downloaded progress file if you may resume later.",
+                    );
+                    if (ok) void clearCollectionRun();
+                  }}
+                >
+                  <RotateCcw size={14} /> Reset Run
+                </GlowButton>
+              </>
+            )}
+          </div>
+        </div>
+
         {(isGenerating || generatedAssets.length > 0) && (
           <>
             <div className="mb-2 flex items-center justify-between text-xs text-zinc-400">
               <span>
-                {generationProgress.toLocaleString()} / {generationTotal.toLocaleString()}
+                {generationProgress.toLocaleString()} /{" "}
+                {generationTotal.toLocaleString()}
               </span>
               <span>{progressPct}%</span>
             </div>
-            <div className="mb-4 h-2 rounded-full bg-zinc-800 overflow-hidden">
+            <div className="mb-4 h-2 overflow-hidden rounded-full bg-zinc-800">
               <div
                 className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-violet-500 transition-all duration-300"
                 style={{ width: `${progressPct}%` }}
@@ -288,19 +455,19 @@ export function CenterPanel() {
 
             {recentPreviews.length > 0 && (
               <div className="mb-4">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2 flex items-center gap-1">
+                <div className="mb-2 flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-500">
                   <Gauge size={10} /> Live Stream (last 4)
                 </div>
                 <div className="grid grid-cols-4 gap-2">
                   {recentPreviews.map((asset) => (
                     <div
                       key={asset.edition}
-                      className="aspect-square rounded-lg border border-zinc-800 overflow-hidden"
+                      className="aspect-square overflow-hidden rounded-lg border border-zinc-800"
                     >
                       <img
                         src={asset.previewUrl}
                         alt={`#${asset.edition}`}
-                        className="w-full h-full object-cover"
+                        className="h-full w-full object-cover"
                       />
                     </div>
                   ))}
@@ -310,7 +477,7 @@ export function CenterPanel() {
 
             {Object.keys(traitDistribution).length > 0 && (
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2 flex items-center gap-1">
+                <div className="mb-2 flex items-center gap-1 text-[10px] uppercase tracking-wider text-zinc-500">
                   <Timer size={10} /> Distribution Accuracy
                 </div>
                 <DistributionChart

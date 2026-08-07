@@ -1,4 +1,6 @@
 import JSZip from "jszip";
+import type { CollectionRun } from "./collection-run";
+import { toProgressManifest } from "./collection-run";
 import type { GeneratedAsset, MetadataConfig, NftMetadata } from "./types";
 
 export async function exportCollectionZip(
@@ -6,6 +8,7 @@ export async function exportCollectionZip(
   config: MetadataConfig,
   slug: string,
   onProgress?: (percent: number) => void,
+  collectionRun?: CollectionRun | null,
 ): Promise<void> {
   const zip = new JSZip();
   const images = zip.folder("images");
@@ -61,12 +64,26 @@ export async function exportCollectionZip(
   const traitReport = buildTraitReport(assets);
   zip.file("rarity-report.json", JSON.stringify(traitReport, null, 2));
 
+  if (collectionRun) {
+    zip.file(
+      "collection-progress.json",
+      JSON.stringify(toProgressManifest(collectionRun), null, 2),
+    );
+  }
+
   const blob = await zip.generateAsync(
     { type: "blob", compression: "DEFLATE", compressionOptions: { level: 1 } },
     (meta) => onProgress?.(Math.round(meta.percent)),
   );
 
-  triggerDownload(blob, `${slug || "collection"}-${Date.now()}.zip`);
+  const editionLabel =
+    assets.length > 0
+      ? `${assets[0]!.edition}-${assets[assets.length - 1]!.edition}`
+      : "batch";
+  triggerDownload(
+    blob,
+    `${slug || "collection"}-${editionLabel}-${Date.now()}.zip`,
+  );
 }
 
 function triggerDownload(blob: Blob, filename: string): void {

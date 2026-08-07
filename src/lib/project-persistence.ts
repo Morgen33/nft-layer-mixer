@@ -15,6 +15,7 @@ import {
   type ProjectListItem,
   type ProjectRecord,
 } from "./project-storage";
+import { loadActiveCollectionRun } from "./collection-run";
 import { buildTraitDistribution } from "./generator";
 import { revokeAssetUrls } from "./zip-export";
 import { revokeLayerUrls } from "./demo-data";
@@ -111,7 +112,25 @@ function clearEphemeralState() {
     generationError: null,
     isGenerating: false,
     isRollingDice: false,
+    collectionRun: null,
   });
+}
+
+async function restoreCollectionRun(projectId: string) {
+  try {
+    const run = await loadActiveCollectionRun(projectId);
+    if (!run) {
+      useGeneratorStore.setState({ collectionRun: null });
+      return;
+    }
+    useGeneratorStore.setState({
+      collectionRun: run,
+      collectionRunTarget: run.totalTarget,
+      collectionRunBatchSize: run.batchSize,
+    });
+  } catch {
+    useGeneratorStore.setState({ collectionRun: null });
+  }
 }
 
 async function applyProjectRecord(record: ProjectRecord) {
@@ -148,6 +167,8 @@ async function applyProjectRecord(record: ProjectRecord) {
     generationError: exclusionWarning,
   });
   lastSavedLayerFingerprint = layerFingerprint(layers);
+
+  await restoreCollectionRun(record.id);
 
   // Never block first paint by loading hundreds of generated PNGs.
   // Schedule a lightweight check; skip restore for large runs.

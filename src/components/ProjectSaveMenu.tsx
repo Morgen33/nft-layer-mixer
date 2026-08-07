@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { FolderOpen, Save, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Download, FolderOpen, Save, Trash2, Upload } from "lucide-react";
 import { GlowButton } from "@/components/ui/primitives";
 import {
   fetchSavedProjects,
@@ -26,11 +26,19 @@ export function ProjectSaveMenu() {
   const [open, setOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
+  const progressInputRef = useRef<HTMLInputElement>(null);
   const isSaving = useGeneratorStore((s) => s.isSaving);
   const lastSavedAt = useGeneratorStore((s) => s.lastSavedAt);
   const activeProjectName = useGeneratorStore((s) => s.activeProjectName);
   const persistenceError = useGeneratorStore((s) => s.persistenceError);
   const persistenceReady = useGeneratorStore((s) => s.persistenceReady);
+  const collectionRun = useGeneratorStore((s) => s.collectionRun);
+  const downloadCollectionProgress = useGeneratorStore(
+    (s) => s.downloadCollectionProgress,
+  );
+  const importCollectionProgress = useGeneratorStore(
+    (s) => s.importCollectionProgress,
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -60,7 +68,10 @@ export function ProjectSaveMenu() {
 
   const handleSave = async () => {
     const defaultName = useGeneratorStore.getState().metadataConfig.namePrefix;
-    const name = window.prompt("Save project as:", defaultName || activeProjectName);
+    const name = window.prompt(
+      "Save project as:",
+      defaultName || activeProjectName,
+    );
     if (!name) return;
     try {
       await saveNamedProject(name);
@@ -86,9 +97,32 @@ export function ProjectSaveMenu() {
     setProjects(await fetchSavedProjects());
   };
 
+  const handleImportProgress = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const raw = JSON.parse(text) as unknown;
+      await importCollectionProgress(raw);
+      window.alert(
+        "Collection progress imported. You can generate the next batch now.",
+      );
+    } catch (error) {
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Could not import collection progress.",
+      );
+    }
+  };
+
   return (
     <div ref={menuRef} className="relative">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <span className="hidden text-[10px] text-zinc-500 xl:inline">
           {isSaving ? "Saving…" : formatSavedAt(lastSavedAt)}
         </span>
@@ -110,6 +144,32 @@ export function ProjectSaveMenu() {
           <FolderOpen size={14} />
           Open
         </GlowButton>
+        <GlowButton
+          variant="ghost"
+          className="text-xs"
+          disabled={!collectionRun}
+          title="Download collection-progress.json for recovery"
+          onClick={() => downloadCollectionProgress()}
+        >
+          <Download size={14} />
+          Progress
+        </GlowButton>
+        <GlowButton
+          variant="ghost"
+          className="text-xs"
+          title="Import collection-progress.json to resume a batch run"
+          onClick={() => progressInputRef.current?.click()}
+        >
+          <Upload size={14} />
+          Import Progress
+        </GlowButton>
+        <input
+          ref={progressInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => void handleImportProgress(e)}
+        />
       </div>
 
       {persistenceError && (
