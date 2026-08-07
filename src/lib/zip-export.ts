@@ -80,10 +80,13 @@ export async function exportCollectionZip(
     assets.length > 0
       ? `${assets[0]!.edition}-${assets[assets.length - 1]!.edition}`
       : "batch";
-  triggerDownload(
-    blob,
-    `${slug || "collection"}-${editionLabel}-${Date.now()}.zip`,
-  );
+  const base = slug || "collection";
+  const batchNumber = collectionRun?.batches.length ?? 0;
+  const filename =
+    collectionRun && batchNumber > 0
+      ? `${base}-batch${batchNumber}-${editionLabel}.zip`
+      : `${base}-${editionLabel}-${Date.now()}.zip`;
+  triggerDownload(blob, filename);
 }
 
 function triggerDownload(blob: Blob, filename: string): void {
